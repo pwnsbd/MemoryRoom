@@ -1,0 +1,30 @@
+# Unreal Engine build/cache artifacts
+Binaries/
+Intermediate/
+Saved/
+DerivedDataCache/
+PackagedBuilds/
+Android_ASTC/
+Build/**/*.log
+Build/**/FileOpenOrder/
+
+# Editor / tool caches, machine-specific
+.vs/
+.vscode/
+.nidhi/
+.idea/
+*.sln
+*.suo
+*.VC.db
+*.VC.opendb
+*.opensdf
+
+# Machine-specific MCP config (hardcoded local paths)
+.mcp.json
+
+# Redundant / stray files
+Source.zip
+$FUNC($$$ARGS)
+AddScrollInput($ARG)
+SetStaticMesh($ARG)
+SetTextureParameterValue($ARGS)
