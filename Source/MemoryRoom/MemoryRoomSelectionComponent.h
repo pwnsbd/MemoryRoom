@@ -316,19 +316,22 @@ protected:
 	// Where the wrist sits relative to the controller, right hand. Starting value taken from
 	// the Interaction SDK's controller-driven hand target (IsdkXRUtils.h, expressed in its
 	// controller-mesh space), so it is a first guess in grip-pose axes, not a calibrated one.
+	// Locations are still that SDK guess; only the rotations below have been calibrated.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
 	FVector HandRelativeLocation = FVector(-10.5f, 3.0f, -4.2f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
 	FVector LeftHandRelativeLocation = FVector(-10.5f, -3.0f, -4.2f);
 
-	// Same source as the locations: the SDK's TargetControllerDrivenHandTransformRight / Left.
-	// Unverified on device. If the hands aim correctly but are rolled wrong, adjust Roll.
+	// Rotation was calibrated in PIE on 2026-10-13 for the left hand (Pitch 0 Yaw 0 Roll 0 looks
+	// right, hand sitting on its own grip-pose controller). The right is assumed symmetric -
+	// separate mirrored mesh on the matching grip pose - and is unverified on device.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FRotator RightHandRelativeRotation = FRotator(-90.0f, -165.0f, 0.0f);
+	FRotator RightHandRelativeRotation = FRotator(0.0f, 0.0f, 0.0f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FRotator LeftHandRelativeRotation = FRotator(90.0f, -15.0f, 0.0f);
+	FRotator LeftHandRelativeRotation = FRotator(0.0f, 0.0f, 0.0f);
+
 	// How far the trigger alone curls the hand. The grip always curls it the whole way.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float TriggerCurlAmount = 0.55f;
