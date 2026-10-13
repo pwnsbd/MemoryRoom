@@ -1086,6 +1086,10 @@ private:
 	// 0..3 index into a small set of dust density presets (Off / Low / Medium / Full).
 	int32 DustAmountLevel = 3;
 
+	// Ambient particle style picked in the settings menu (Dust / Leaves). Wins over the theme's
+	// MoteStyle: ApplyTheme applies this instead of the theme's value.
+	EMemoryRoomMoteStyle ParticleStyle = EMemoryRoomMoteStyle::Dust;
+
 	float ScrollVelocity;
 	float ScrollInputAmount;
 	float HeldScrollInputAmount;
