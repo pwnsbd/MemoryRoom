@@ -10,7 +10,8 @@ public class MemoryRoom : ModuleRules
 	
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine", "InputCore", "ImageWrapper", "Json", "JsonUtilities", "HeadMountedDisplay", "XRBase", "EnhancedInput" });
 
-		PrivateDependencyModuleNames.AddRange(new string[] {  });
+		// Meta Interaction SDK: controller-driven hand rigs (UMemoryRoomMetaRigComponent).
+		PrivateDependencyModuleNames.AddRange(new string[] { "OculusInteraction", "OculusInteractionPrebuilts" });
 
 		if (Target.Platform == UnrealTargetPlatform.Android)
 		{

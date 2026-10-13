@@ -16,7 +16,7 @@ class UCameraComponent;
 class UMaterialInterface;
 class UStaticMesh;
 class UStaticMeshComponent;
-class UMemoryRoomHandVisualsComponent;
+class UMemoryRoomMetaRigComponent;
 class USceneComponent;
 class USplineComponent;
 class USplineMeshComponent;
@@ -108,11 +108,6 @@ public:
 	// No effect otherwise (there is nothing to zoom).
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Zoom")
 	void AddZoomInput(float Amount);
-
-	// Analog hand curl. Wire the trigger and grip axes here if you want the fingers to follow
-	// the pull; the grab and release calls above already drive it on their own otherwise.
-	UFUNCTION(BlueprintCallable, Category = "Memory Room|Controllers")
-	void SetHandCurlInput(float GripValue, float TriggerValue);
 
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Selection")
@@ -269,18 +264,6 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Debug")
 	bool bDebugSelectionLog;
 
-	// How far the trigger alone curls the hand. The grip always curls it the whole way.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float TriggerCurlAmount = 0.55f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers", meta = (ClampMin = "0.1"))
-	float HandCurlInterpSpeed = 22.0f;
-
-	// How long a trigger press holds the partial curl, since the trigger is bound as a press
-	// rather than an axis.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers", meta = (ClampMin = "0.0"))
-	float TriggerPulseDuration = 0.18f;
-
 private:
 	void ApplyDefaultAssetReferences();
 	void ApplyDefaultComponentReferences();
@@ -290,7 +273,6 @@ private:
 	UCameraComponent* ResolveCameraComponent();
 	AMemoryRoomManager* ResolveMemoryRoomManager();
 	void EnsurePointerComponents();
-	void UpdateHandCurl(float DeltaTime);
 	void UpdatePointerVisual(USplineComponent* Spline, USplineMeshComponent* Beam, UStaticMeshComponent* HitIndicator, const FVector& Start, const FVector& End, bool bValidTarget, bool bShowHitIndicator, bool bUseBeamVisual, bool bUseHmdTargetX, float IndicatorRadiusScale = 1.0f);
 	void UpdateHmdTargetXVisual(const FVector& Start, const FVector& End, bool bVisible);
 	void HideHmdTargetXVisual();
@@ -375,17 +357,10 @@ private:
 	// photo into a camera-follower.
 	FTransform CachedExpandedBaseTransform = FTransform::Identity;
 
-	// Built in BeginPlay; draws the controllers and hands. This component only feeds it curl.
+	// Built in BeginPlay; draws the controllers and hands with the Meta Interaction SDK rigs and
+	// supplies the left aim-pose controller the left laser starts from.
 	UPROPERTY(Transient)
-	TObjectPtr<UMemoryRoomHandVisualsComponent> HandVisuals;
-
-	// Where the fingers are being asked to go, and where they actually are this frame.
-	float TargetHandCurl = 0.0f;
-	float CurrentHandCurl = 0.0f;
-	// The three things that can ask for curl: a held grab, an analog axis, a trigger tap.
-	bool bGrabCurlHeld = false;
-	float AnalogHandCurl = 0.0f;
-	float TriggerPulseSeconds = 0.0f;
+	TObjectPtr<UMemoryRoomMetaRigComponent> MetaRig;
 
 	UPROPERTY(Transient)
 	TObjectPtr<USplineComponent> PointerSplineComponent;
