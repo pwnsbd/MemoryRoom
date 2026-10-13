@@ -324,25 +324,20 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
 	FString RightControllerMeshPath = TEXT("/Game/MetaHands/Models/Controllers/MetaQuestPro/SM_MetaQuestPro_Right.SM_MetaQuestPro_Right");
 
-	// Where the wrist sits relative to the controller, right hand. Starting value taken from
-	// the Interaction SDK's controller-driven hand target (IsdkXRUtils.h, expressed in its
-	// controller-mesh space), so it is a first guess in grip-pose axes, not a calibrated one.
-	// Locations are still that SDK guess; only the rotations below have been calibrated.
+	// Where the wrist sits relative to the controller mesh (the hand is a child of it), taken from
+	// the Interaction SDK (IsdkControllerVisualsRigComponent / IsdkXRUtils.h). Renamed from the old
+	// "...RelativeLocation/Rotation" so values stored in BP_VRPawn do not override these.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FVector RightHandRelativeLocation = FVector(-10.5f, 3.0f, -4.2f);
+	FVector RightHandOffsetFromControllerLocation = FVector(-10.5f, 3.0f, -4.2f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FVector LeftHandRelativeLocation = FVector(-10.5f, -3.0f, -4.2f);
-
-	// Rotation was calibrated in PIE on 2026-10-13 for the left hand (Pitch 0 Yaw 0 Roll 0 looks
-	// right, hand sitting on its own grip-pose controller). The right is assumed symmetric -
-	// separate mirrored mesh on the matching grip pose - and is unverified on device.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FRotator RightHandRelativeRotation = FRotator(0.0f, 0.0f, 0.0f);
+	FVector LeftHandOffsetFromControllerLocation = FVector(-10.5f, -3.0f, -4.2f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FRotator LeftHandRelativeRotation = FRotator(0.0f, 0.0f, 0.0f);
+	FRotator RightHandOffsetFromControllerRotation = FRotator(-90.0f, -165.0f, 0.0f);
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
+	FRotator LeftHandOffsetFromControllerRotation = FRotator(90.0f, -15.0f, 0.0f);
 	// How far the trigger alone curls the hand. The grip always curls it the whole way.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float TriggerCurlAmount = 0.55f;
