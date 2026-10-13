@@ -1950,11 +1950,32 @@ void AMemoryRoomManager::ScanPhotoFolder()
 	FPaths::NormalizeDirectoryName(FolderToScan);
 
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+#if !PLATFORM_ANDROID
+	if (!PlatformFile.DirectoryExists(*FolderToScan))
+	{
+		// Scanning runs once per load, not per frame, so this warns once. PhotoFolderPath itself
+		// is left alone; only this scan falls back to the user's Pictures folder.
+		FString PicturesFolder = FPaths::Combine(FPlatformProcess::UserDir(), TEXT(".."), TEXT("Pictures"));
+		FPaths::CollapseRelativeDirectories(PicturesFolder);
+		FPaths::NormalizeDirectoryName(PicturesFolder);
+		if (!PicturesFolder.IsEmpty() && PlatformFile.DirectoryExists(*PicturesFolder))
+		{
+			UE_LOG(LogMemoryRoom, Warning, TEXT("%s PhotoFolderPath does not exist: %s. Falling back to: %s"), *GetName(), *FolderToScan, *PicturesFolder);
+			FolderToScan = PicturesFolder;
+		}
+		else
+		{
+			UE_LOG(LogMemoryRoom, Warning, TEXT("%s PhotoFolderPath does not exist: %s, and the Pictures fallback (%s) is not available either."), *GetName(), *FolderToScan, *PicturesFolder);
+			return;
+		}
+	}
+#else
 	if (!PlatformFile.DirectoryExists(*FolderToScan))
 	{
 		UE_LOG(LogMemoryRoom, Warning, TEXT("%s cannot scan photos because folder does not exist: %s"), *GetName(), *FolderToScan);
 		return;
 	}
+#endif
 
 	UE_LOG(LogMemoryRoom, Log, TEXT("%s scanning photo folder: %s"), *GetName(), *FolderToScan);
 
@@ -2837,9 +2858,12 @@ bool AMemoryRoomManager::LoadFirstDiscoveredPhoto()
 
 	PhotoToLoad->SetActorHiddenInGame(false);
 	PhotoToLoad->AssignPhotoIndex(0);
-	const bool bLoaded = PhotoToLoad->LoadImageFromFile(FirstPhotoPath);
+	// Header read now, pixels decoded on a worker thread; the photo keeps its placeholder until
+	// the texture lands. A synchronous decode here stalled the game thread at startup.
+	const bool bLoaded = PhotoToLoad->PrepareFromFile(FirstPhotoPath);
 	if (bLoaded)
 	{
+		PhotoToLoad->LoadImageFromFileAsync(FirstPhotoPath, FMath::Max(MaximumRuntimeTextureDimension, 512));
 		NumberOfPhotos = FMath::Max(NumberOfPhotos, SpawnedPhotos.Num());
 		RebuildPhotoPathCache();
 		LayoutSpawnedPhotos();
@@ -3969,6 +3993,43 @@ void AMemoryRoomManager::LayoutVirtualizedGallery()
 	int32 VisibleCount = 0;
 	int32 TexturedCount = 0;
 	const float FocusOpacityScale = FMath::Lerp(1.0f, FMath::Clamp(FocusOtherPhotoOpacity, 0.0f, 1.0f), FocusBlend);
+
+	// The layout pass also runs every frame while textures are still arriving, with nothing
+	// else moving. Hash every input to the transform/viewing state below; when it matches the
+	// last pass, photos already at rest in their slot keep what they have.
+	uint32 LayoutKey = GetTypeHash(ScrollOffset);
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(FocusOpacityScale));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(CachedHelixCenterLocation));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GetActorTransform().GetLocation()));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GetActorRotation().Euler()));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GallerySpiralDegreesPerUnit));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GallerySpiralRisePerUnit));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GallerySpiralBaseRadius));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GallerySpiralTopRadius));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GallerySpiralTaperHeight));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(PhotoHeight));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(PhotoRotationOffset.Euler()));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(MinPhotoScale));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(MaxPhotoScale));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(SizeVariationSeed));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GalleryBottomMargin));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GalleryWindowCount));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GalleryFadeTopCount));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(TopMaxBlurAmount));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GalleryPathOffsets.Num()));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GalleryPathOffsets.Last()));
+	for (const TObjectPtr<AMemoryPhotoActor>& PhotoPtr : SpawnedPhotos)
+	{
+		if (const AMemoryPhotoActor* Photo = PhotoPtr.Get())
+		{
+			// Index and eligibility both feed the key, so a reassigned, placed or newly
+			// freed actor always forces a full pass.
+			LayoutKey = HashCombine(LayoutKey, GetTypeHash(Photo->IsExpanded() || Photo->IsPlacedInWorld() ? INDEX_NONE - 1 : Photo->GetAssignedPhotoIndex()));
+		}
+	}
+	const bool bLayoutUnchanged = bHasVirtualLayoutKey && LayoutKey == LastVirtualLayoutKey;
+	LastVirtualLayoutKey = LayoutKey;
+	bHasVirtualLayoutKey = true;
 	for (const TObjectPtr<AMemoryPhotoActor>& PhotoPtr : SpawnedPhotos)
 	{
 		AMemoryPhotoActor* Photo = PhotoPtr.Get();
@@ -3994,13 +4055,23 @@ void AMemoryRoomManager::LayoutVirtualizedGallery()
 		const float PathOffset = GalleryPathOffsets.IsValidIndex(Index) ? GalleryPathOffsets[Index] : static_cast<float>(Index);
 		const float PathIndex = PathOffset + ScrollOffset;
 		const FPhotoViewingState ViewingState = BuildVirtualizedViewingState(PathIndex);
-		const float BaseScale = GetDeterministicPhotoScale(Index);
-		FTransform PhotoTransform = BuildVirtualizedPhotoTransform(Index, PathOffset + ScrollOffset);
-		PhotoTransform.SetScale3D(FVector(BaseScale * ViewingState.ScaleMultiplier));
-		Photo->SetLayoutTransform(PhotoTransform, ScrollOffset);
 
-		ApplyOrQueueGalleryThumbnail(Photo, Index, ActiveDecodes);
-		Photo->ApplyViewingWindowState(ViewingState.Opacity * FocusOpacityScale, ViewingState.ScaleMultiplier, ViewingState.bInteractive, ViewingState.BlurAmount);
+		if (bLayoutUnchanged && Photo->IsLayoutAtRest())
+		{
+			// Same inputs as the previous pass and nothing is animating this photo, so its
+			// transform and viewing state are already correct. Only texture work remains.
+			ApplyOrQueueGalleryThumbnail(Photo, Index, ActiveDecodes);
+		}
+		else
+		{
+			const float BaseScale = GetDeterministicPhotoScale(Index);
+			FTransform PhotoTransform = BuildVirtualizedPhotoTransform(Index, PathOffset + ScrollOffset);
+			PhotoTransform.SetScale3D(FVector(BaseScale * ViewingState.ScaleMultiplier));
+			Photo->SetLayoutTransform(PhotoTransform, ScrollOffset);
+
+			ApplyOrQueueGalleryThumbnail(Photo, Index, ActiveDecodes);
+			Photo->ApplyViewingWindowState(ViewingState.Opacity * FocusOpacityScale, ViewingState.ScaleMultiplier, ViewingState.bInteractive, ViewingState.BlurAmount);
+		}
 
 		if (ViewingState.bVisible)
 		{

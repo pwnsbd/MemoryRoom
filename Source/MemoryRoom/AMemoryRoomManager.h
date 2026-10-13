@@ -1055,6 +1055,10 @@ private:
 	// its texture; otherwise the queue would stall the moment the player let go.
 	bool bHasPendingPhotoTextures = false;
 	double LastLayoutDiagnosticSeconds = -10.0;
+	// Hash of everything LayoutVirtualizedGallery's per-photo transform/viewing state depends
+	// on. While it is unchanged, photos already at rest in their slot are not re-laid-out.
+	uint32 LastVirtualLayoutKey = 0;
+	bool bHasVirtualLayoutKey = false;
 
 	// 0..3 index into a small set of dust density presets (Off / Low / Medium / Full).
 	int32 DustAmountLevel = 3;
