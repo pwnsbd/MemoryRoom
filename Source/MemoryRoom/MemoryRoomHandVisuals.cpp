@@ -6,8 +6,16 @@
 #include "Animation/AnimSequence.h"
 #include "Animation/AnimSingleNodeInstance.h"
 #include "Components/SkeletalMeshComponent.h"
+#include "Engine/LocalPlayer.h"
 #include "Engine/SkeletalMesh.h"
+#include "Engine/World.h"
+#include "EnhancedInputSubsystems.h"
+#include "EnhancedPlayerInput.h"
 #include "GameFramework/Actor.h"
+#include "GameFramework/PlayerController.h"
+#include "InputAction.h"
+#include "InputMappingContext.h"
+#include "MemoryRoomHandAnimInstance.h"
 #include "IMotionController.h"
 #include "MotionControllerComponent.h"
 #include "XRDeviceVisualizationComponent.h"
@@ -25,6 +33,8 @@ namespace
 UMemoryRoomHandVisualsComponent::UMemoryRoomHandVisualsComponent()
 {
 	PrimaryComponentTick.bCanEverTick = true;
+	// After animation: the wrist solve reads the bone the finger blend just evaluated.
+	PrimaryComponentTick.TickGroup = TG_PostPhysics;
 }
 
 void UMemoryRoomHandVisualsComponent::BeginPlay()
@@ -53,6 +63,7 @@ void UMemoryRoomHandVisualsComponent::BeginPlay()
 	RightSide.WristTarget = FTransform(RightWristTargetRotation, RightWristTargetLocation, FVector::OneVector);
 	BuildSide(true, LeftSide);
 	BuildSide(false, RightSide);
+	CreateInputObjects();
 }
 
 void UMemoryRoomHandVisualsComponent::BuildSide(bool bLeft, FSide& Side)
@@ -82,6 +93,12 @@ void UMemoryRoomHandVisualsComponent::BuildSide(bool bLeft, FSide& Side)
 	else
 	{
 		KeepAlive.Add(Side.GraspAnim);
+	}
+	UAnimSequence* IdleAnim = LoadObject<UAnimSequence>(nullptr, bLeft ? *LeftIdleAnimPath : *RightIdleAnimPath);
+	UAnimSequence* TriggerAnim = LoadObject<UAnimSequence>(nullptr, bLeft ? *LeftTriggerAnimPath : *RightTriggerAnimPath);
+	if (!IdleAnim || !TriggerAnim)
+	{
+		UE_LOG(LogMemoryRoom, Warning, TEXT("%s could not load the %s idle or trigger animation; the fingers will not follow the controller."), *GetNameSafe(this), bLeft ? TEXT("left") : TEXT("right"));
 	}
 
 	// Share the parent of the pawn's own controller on this side so the tracking space matches.
@@ -129,13 +146,19 @@ void UMemoryRoomHandVisualsComponent::BuildSide(bool bLeft, FSide& Side)
 	Side.Hand->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	Side.Hand->SetCastShadow(false);
 	Side.Hand->SetRelativeTransform(FTransform::Identity);
+	// Native anim instance, no Animation Blueprint: it blends the idle/grip/trigger clips itself.
+	Side.Hand->SetAnimationMode(EAnimationMode::AnimationBlueprint);
+	Side.Hand->SetAnimInstanceClass(UMemoryRoomHandAnimInstance::StaticClass());
 	Side.Hand->RegisterComponent();
-	if (Side.GraspAnim)
+	if (IdleAnim && Side.GraspAnim && TriggerAnim)
 	{
-		// Not played, scrubbed: SetCurl picks the frame. Rate zero so nothing advances on its own.
-		Side.Hand->PlayAnimation(Side.GraspAnim, false);
-		Side.Hand->SetPlayRate(0.0f);
-		Side.Hand->SetPosition(0.0f, false);
+		Side.AnimInstance = Cast<UMemoryRoomHandAnimInstance>(Side.Hand->GetAnimInstance());
+		if (Side.AnimInstance)
+		{
+			Side.AnimInstance->SetPoses(IdleAnim, Side.GraspAnim, TriggerAnim);
+			KeepAlive.Add(IdleAnim);
+			KeepAlive.Add(TriggerAnim);
+		}
 	}
 
 	UE_LOG(LogMemoryRoom, Log, TEXT("%s built %s controller and hand on %s (parent %s)."), *GetNameSafe(this), *SidePrefix, *Side.Grip->GetName(), *GetNameSafe(Parent));
@@ -143,12 +166,61 @@ void UMemoryRoomHandVisualsComponent::BuildSide(bool bLeft, FSide& Side)
 
 void UMemoryRoomHandVisualsComponent::SetCurl(bool bLeft, float Value)
 {
-	const FSide& Side = bLeft ? LeftSide : RightSide;
-	if (!Side.Hand || !Side.GraspAnim)
+	(bLeft ? LeftSide : RightSide).Curl = FMath::Clamp(Value, 0.0f, 1.0f);
+}
+
+void UMemoryRoomHandVisualsComponent::CreateInputObjects()
+{
+	// Runtime Enhanced Input: XR axes only reach the game through it, and the pawn's own IMC does not
+	// map grip/trigger. Same keys in another context are fine as long as these actions do not consume.
+	InputContext = NewObject<UInputMappingContext>(this, TEXT("MemoryRoomHandFingerContext"));
+	KeepAlive.Add(InputContext);
+	struct FBinding { FSide* Side; bool bGrip; const TCHAR* Name; FKey Key; };
+	const FBinding Bindings[] = {
+		{ &LeftSide, true, TEXT("LeftGrip"), EKeys::OculusTouch_Left_Grip_Axis },
+		{ &LeftSide, false, TEXT("LeftTrigger"), EKeys::OculusTouch_Left_Trigger_Axis },
+		{ &RightSide, true, TEXT("RightGrip"), EKeys::OculusTouch_Right_Grip_Axis },
+		{ &RightSide, false, TEXT("RightTrigger"), EKeys::OculusTouch_Right_Trigger_Axis },
+	};
+	for (const FBinding& Binding : Bindings)
+	{
+		UInputAction* Action = NewObject<UInputAction>(this, *FString::Printf(TEXT("MemoryRoomHand%s"), Binding.Name));
+		Action->ValueType = EInputActionValueType::Axis1D;
+		Action->bConsumeInput = false;
+		InputContext->MapKey(Action, Binding.Key);
+		KeepAlive.Add(Action);
+		(Binding.bGrip ? Binding.Side->GripAction : Binding.Side->TriggerAction) = Action;
+	}
+}
+
+void UMemoryRoomHandVisualsComponent::TryRegisterInput()
+{
+	UWorld* World = GetWorld();
+	APlayerController* Controller = World ? World->GetFirstPlayerController() : nullptr;
+	ULocalPlayer* LocalPlayer = Controller ? Controller->GetLocalPlayer() : nullptr;
+	UEnhancedInputLocalPlayerSubsystem* Subsystem = LocalPlayer ? LocalPlayer->GetSubsystem<UEnhancedInputLocalPlayerSubsystem>() : nullptr;
+	if (!Subsystem || !InputContext)
 	{
 		return;
 	}
-	Side.Hand->SetPosition(FMath::Clamp(Value, 0.0f, 1.0f) * Side.GraspAnim->GetPlayLength(), false);
+	// Far below any gameplay context so this never shadows an existing mapping.
+	Subsystem->AddMappingContext(InputContext, -1000);
+	bInputRegistered = true;
+}
+
+void UMemoryRoomHandVisualsComponent::ReadInput(FSide& Side) const
+{
+	APlayerController* Controller = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	const UEnhancedPlayerInput* PlayerInput = Controller ? Cast<UEnhancedPlayerInput>(Controller->PlayerInput) : nullptr;
+	float Grip = 0.0f;
+	float Trigger = 0.0f;
+	if (PlayerInput && Side.GripAction && Side.TriggerAction)
+	{
+		Grip = PlayerInput->GetActionValue(Side.GripAction).Get<float>();
+		Trigger = PlayerInput->GetActionValue(Side.TriggerAction).Get<float>();
+	}
+	// SetCurl is a floor on the grip so a grab-hold still closes the hand with no squeeze.
+	Side.AnimInstance->SetInput(FMath::Max(Grip, Side.Curl), Trigger);
 }
 
 void UMemoryRoomHandVisualsComponent::SolveWrist(FSide& Side) const
@@ -168,11 +240,20 @@ void UMemoryRoomHandVisualsComponent::TickComponent(float DeltaTime, ELevelTick 
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	// Every tick, not just until first converged: the curl clip moves the finger bones and the
+	if (!bInputRegistered)
+	{
+		TryRegisterInput();
+	}
+
+	// Every tick, not just until first converged: the finger blend moves the finger bones and the
 	// skeleton only settles after the first evaluated frames, so the wrist is re-checked and
 	// the correction is a no-op once it is on target.
 	for (FSide* Side : { &LeftSide, &RightSide })
 	{
+		if (Side->AnimInstance)
+		{
+			ReadInput(*Side);
+		}
 		if (Side->Hand && Side->Controller)
 		{
 			SolveWrist(*Side);
