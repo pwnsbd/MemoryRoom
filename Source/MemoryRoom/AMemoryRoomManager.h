@@ -60,7 +60,16 @@ enum class EMemoryRoomUserSetting : uint8
 	ThumbnailQuality,
 	Theme,
 	Float,
+	PhotoAlbum,
 	Count UMETA(Hidden)
+};
+
+// One entry in the Photos row's album list. Id is empty for "All photos".
+struct FMemoryRoomAlbum
+{
+	FString Id;
+	FString Name;
+	int32 Count = 0;
 };
 
 class AMemoryRoomMenuActor;
@@ -838,6 +847,14 @@ private:
 	// Android folder-based photo loading (alternative to MediaStore).
 	FString ResolveAndroidPhotoFolderPath() const;
 	bool TryStartAndroidFolderLoad();
+	// Photo albums (the settings panel's Photos row). The list is cached; RefreshAlbumList
+	// rebuilds it off the game thread at startup, on reload, and when the row is used.
+	void RefreshAlbumList();
+	void FinishAlbumList(TArray<FMemoryRoomAlbum>&& Found, bool bComplete);
+	void ScheduleAlbumReload();
+	// The MediaStore bucket to filter by, or empty when the selection is not a MediaStore album.
+	FString GetActiveBucketId() const;
+	void ApplyAlbumFilterToPhotoSource();
 	void AssignAndroidPhotoToActor(int32 PhotoIndex, AMemoryPhotoActor* PhotoActor);
 	void QueueAndroidThumbnailRequest(int32 PhotoIndex, AMemoryPhotoActor* PhotoActor);
 	void PumpAndroidThumbnailQueue();
@@ -859,6 +876,12 @@ private:
 	// and ApplyUserSettings). bRelayout requests a gallery path rebuild afterward.
 	void PushUserSettingToWorld(EMemoryRoomUserSetting Setting, bool& bOutNeedsRelayout);
 	void SaveUserSettings() const;
+
+	TArray<FMemoryRoomAlbum> Albums;
+	FString SelectedAlbumId;
+	int32 AlbumEnumerationGeneration = 0;
+	double LastAlbumRefreshSeconds = -1000.0;
+	FTimerHandle AlbumReloadTimerHandle;
 	AMemoryRoomSkyDomeActor* FindSkyDome() const;
 	AMemoryRoomDustActor* FindDustActor() const;
 

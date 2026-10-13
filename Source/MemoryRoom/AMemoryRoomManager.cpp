@@ -627,6 +627,7 @@ void AMemoryRoomManager::BeginPlay()
 
 	// Restore the player's saved settings-panel choices and push them into the world.
 	ApplyUserSettings();
+	RefreshAlbumList();
 
 	// Independent of the gallery scan below - a placed photo is addressed by its own saved
 	// absolute path, not a logical index into the discovered library.
@@ -651,7 +652,14 @@ void AMemoryRoomManager::BeginPlay()
 		{
 			if (!bIsLoadingGallery && GalleryPhotoFiles.IsEmpty())
 			{
-				TryStartAndroidFolderLoad();
+				if (!GetActiveBucketId().IsEmpty())
+				{
+					StartAndroidMediaStoreDiagnosticLoad();
+				}
+				else
+				{
+					TryStartAndroidFolderLoad();
+				}
 			}
 		}));
 	}
@@ -1034,8 +1042,9 @@ void AMemoryRoomManager::JumpToNewestPhoto()
 void AMemoryRoomManager::ReloadPhotoLibrary()
 {
 	OnPhotoLibraryReloadStarted.Broadcast();
+	RefreshAlbumList();
 #if PLATFORM_ANDROID
-	if (TryStartAndroidFolderLoad())
+	if (GetActiveBucketId().IsEmpty() && TryStartAndroidFolderLoad())
 	{
 		OnPhotoLibraryReloadCompleted.Broadcast(NumberOfPhotos, true);
 		return;
@@ -1086,6 +1095,7 @@ void AMemoryRoomManager::ReloadPhotoLibrary()
 			return;
 		}
 		const int32 QueryLimit = FMath::Max(Manager->MaxPhotosToLoad > 0 ? Manager->MaxPhotosToLoad : 1000, 1);
+		Manager->ApplyAlbumFilterToPhotoSource();
 		Manager->PhotoSource->QueryPhotosAsync(0, QueryLimit, FMemoryPhotoMetadataPageCallback::CreateLambda([WeakThis, RequestGeneration](bool bSuccess, const TArray<FMemoryPhotoMetadata>& Photos, int32 TotalCount)
 		{
 			AMemoryRoomManager* M = WeakThis.Get();
@@ -1722,6 +1732,16 @@ void AMemoryRoomManager::GetUserSettingParts(EMemoryRoomUserSetting Setting, FTe
 		return Row(TEXT("Theme"), FallbackThemeId == EMemoryRoomThemeId::Void ? TEXT("Void") : TEXT("Hearth"));
 	case EMemoryRoomUserSetting::Float:
 		return Row(TEXT("Float"), bFloatEnabled ? TEXT("On") : TEXT("Off"));
+	case EMemoryRoomUserSetting::PhotoAlbum:
+	{
+		const FMemoryRoomAlbum* Selected = SelectedAlbumId.IsEmpty() ? nullptr : Albums.FindByPredicate([this](const FMemoryRoomAlbum& A) { return A.Id == SelectedAlbumId; });
+		if (!Selected)
+		{
+			return Row(TEXT("Photos"), Albums.Num() > 1 ? TEXT("All photos") : TEXT("All"));
+		}
+		const FString ShortName = Selected->Name.Len() > 18 ? Selected->Name.Left(17) + TEXT("..") : Selected->Name;
+		return Row(TEXT("Photos"), FString::Printf(TEXT("%s (%d)"), *ShortName, Selected->Count));
+	}
 	default:
 		break;
 	}
@@ -1773,6 +1793,25 @@ void AMemoryRoomManager::AdjustUserSetting(EMemoryRoomUserSetting Setting, int32
 	case EMemoryRoomUserSetting::Float:
 		bFloatEnabled = !bFloatEnabled;
 		break;
+	case EMemoryRoomUserSetting::PhotoAlbum:
+	{
+		// Cycles the cached list (index 0 = all photos); with no albums it does nothing. The
+		// reload is debounced so stepping past several albums only loads the one you stop on.
+		if (Albums.Num() > 1)
+		{
+			int32 Current = Albums.IndexOfByPredicate([this](const FMemoryRoomAlbum& A) { return A.Id == SelectedAlbumId; });
+			Current = FMath::Max(Current, 0);
+			const int32 AlbumCount = Albums.Num();
+			Current = (Current + (Direction < 0 ? -1 : 1) + AlbumCount) % AlbumCount;
+			SelectedAlbumId = Albums[Current].Id;
+			ScheduleAlbumReload();
+		}
+		if (Albums.Num() <= 1 || FPlatformTime::Seconds() - LastAlbumRefreshSeconds > 15.0)
+		{
+			RefreshAlbumList();
+		}
+		break;
+	}
 	default:
 		break;
 	}
@@ -1834,6 +1873,7 @@ void AMemoryRoomManager::ApplyUserSettings()
 			MaximumScrollSpeed = FMath::Clamp(Save->ScrollSpeed, 2.0f, 30.0f);
 			PhotoGlowLightIntensity = FMath::Clamp(Save->NightPhotoGlow, 0.0f, 14.0f);
 			DustAmountLevel = FMath::Clamp(Save->DustAmountLevel, 0, 3);
+			SelectedAlbumId = Save->PhotoAlbumId;
 			// BeginPlay calls ApplyTheme() before this (see the order there), so it has already
 			// synthesised and cached ActiveTheme off the default FallbackThemeId - if the saved
 			// choice differs, clear that cache and re-resolve now so the room opens on whichever
@@ -1866,6 +1906,7 @@ void AMemoryRoomManager::SaveUserSettings() const
 	Save->NightPhotoGlow = PhotoGlowLightIntensity;
 	Save->DustAmountLevel = DustAmountLevel;
 	Save->ThemeId = FallbackThemeId;
+	Save->PhotoAlbumId = SelectedAlbumId;
 	UGameplayStatics::SaveGameToSlot(Save, MemoryRoomSaveSlot, 0);
 }
 
@@ -1977,6 +2018,14 @@ void AMemoryRoomManager::ScanPhotoFolder()
 	}
 #endif
 
+#if !PLATFORM_ANDROID
+	// A chosen album is a subfolder of the folder resolved above; a vanished one falls back to it.
+	if (!SelectedAlbumId.IsEmpty() && PlatformFile.DirectoryExists(*SelectedAlbumId))
+	{
+		FolderToScan = SelectedAlbumId;
+	}
+#endif
+
 	UE_LOG(LogMemoryRoom, Log, TEXT("%s scanning photo folder: %s"), *GetName(), *FolderToScan);
 
 	TArray<FString> AllFiles;
@@ -2011,10 +2060,165 @@ void AMemoryRoomManager::ScanPhotoFolder()
 	UE_LOG(LogMemoryRoom, Log, TEXT("%s discovered %d supported image file(s) in: %s"), *GetName(), DiscoveredPhotoFiles.Num(), *FolderToScan);
 }
 
+namespace
+{
+	bool IsSupportedPhotoExtension(const FString& FileName)
+	{
+		const FString Extension = FPaths::GetExtension(FileName, false).ToLower();
+		return Extension == TEXT("jpg") || Extension == TEXT("jpeg") || Extension == TEXT("png") || Extension == TEXT("cr2");
+	}
+
+	int32 CountPhotosInFolder(const FString& Folder)
+	{
+		TArray<FString> Files;
+		IFileManager::Get().FindFiles(Files, *FPaths::Combine(Folder, TEXT("*.*")), true, false);
+		int32 Count = 0;
+		for (const FString& File : Files)
+		{
+			if (IsSupportedPhotoExtension(File)) ++Count;
+		}
+		return Count;
+	}
+
+	// Id of the headset-folder album on Android (MediaStore bucket ids are numeric, so no clash).
+	const TCHAR* const HeadsetFolderAlbumId = TEXT("@folder");
+}
+
+void AMemoryRoomManager::RefreshAlbumList()
+{
+	const int32 Generation = ++AlbumEnumerationGeneration;
+	LastAlbumRefreshSeconds = FPlatformTime::Seconds();
+
+	FString Root = PhotoFolderPath;
+#if PLATFORM_ANDROID
+	// The headset folder is an album only while it is the active photo source.
+	Root = bAndroidUsePhotoFolder ? ResolveAndroidPhotoFolderPath() : FString();
+#endif
+	Root.TrimStartAndEndInline();
+
+	TWeakObjectPtr<AMemoryRoomManager> WeakThis(this);
+	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [WeakThis, Generation, Root]()
+	{
+		TArray<FMemoryRoomAlbum> Found;
+		FString Folder = Root;
+		FPaths::NormalizeDirectoryName(Folder);
+		IFileManager& FileManager = IFileManager::Get();
+#if !PLATFORM_ANDROID
+		// Same fallback ScanPhotoFolder uses: a missing PhotoFolderPath lists the Pictures subfolders.
+		if (Folder.IsEmpty() || !FileManager.DirectoryExists(*Folder))
+		{
+			Folder = FPaths::Combine(FPlatformProcess::UserDir(), TEXT(".."), TEXT("Pictures"));
+			FPaths::CollapseRelativeDirectories(Folder);
+			FPaths::NormalizeDirectoryName(Folder);
+		}
+		if (!Folder.IsEmpty() && FileManager.DirectoryExists(*Folder))
+		{
+			TArray<FString> SubFolders;
+			FileManager.FindFiles(SubFolders, *FPaths::Combine(Folder, TEXT("*")), false, true);
+			SubFolders.Sort([](const FString& L, const FString& R) { return L.Compare(R, ESearchCase::IgnoreCase) < 0; });
+			for (const FString& Sub : SubFolders)
+			{
+				FString Path = FPaths::Combine(Folder, Sub);
+				FPaths::NormalizeDirectoryName(Path);
+				const int32 Count = CountPhotosInFolder(Path);
+				if (Count > 0)
+				{
+					FMemoryRoomAlbum Album;
+					Album.Id = Path;
+					Album.Name = Sub;
+					Album.Count = Count;
+					Found.Add(Album);
+				}
+			}
+		}
+#else
+		if (!Folder.IsEmpty() && FileManager.DirectoryExists(*Folder))
+		{
+			const int32 Count = CountPhotosInFolder(Folder);
+			if (Count > 0)
+			{
+				FMemoryRoomAlbum Album;
+				Album.Id = HeadsetFolderAlbumId;
+				Album.Name = TEXT("Headset folder");
+				Album.Count = Count;
+				Found.Add(Album);
+			}
+		}
+#endif
+		AsyncTask(ENamedThreads::GameThread, [WeakThis, Generation, Found = MoveTemp(Found)]() mutable
+		{
+			AMemoryRoomManager* M = WeakThis.Get();
+			if (!M || M->AlbumEnumerationGeneration != Generation) return;
+#if PLATFORM_ANDROID
+			if (!M->PhotoSource)
+			{
+				M->PhotoSource = MakeUnique<FAndroidMediaStorePhotoSource>();
+			}
+			static_cast<FAndroidMediaStorePhotoSource*>(M->PhotoSource.Get())->QueryAlbumsAsync(
+				[WeakThis, Generation, Found = MoveTemp(Found)](bool bSuccess, TArray<FMemoryRoomAlbum> Buckets) mutable
+				{
+					AMemoryRoomManager* Manager = WeakThis.Get();
+					if (!Manager || Manager->AlbumEnumerationGeneration != Generation) return;
+					Found.Append(Buckets);
+					// Without media permission the bucket query fails; the saved choice must survive that.
+					Manager->FinishAlbumList(MoveTemp(Found), bSuccess);
+				});
+#else
+			M->FinishAlbumList(MoveTemp(Found), true);
+#endif
+		});
+	});
+}
+
+void AMemoryRoomManager::FinishAlbumList(TArray<FMemoryRoomAlbum>&& Found, bool bComplete)
+{
+	Albums.Reset();
+	FMemoryRoomAlbum AllPhotos;
+	AllPhotos.Name = TEXT("All photos");
+	Albums.Add(AllPhotos);
+	Albums.Append(MoveTemp(Found));
+
+	if (bComplete && !SelectedAlbumId.IsEmpty() && !Albums.ContainsByPredicate([this](const FMemoryRoomAlbum& A) { return A.Id == SelectedAlbumId; }))
+	{
+		UE_LOG(LogMemoryRoom, Log, TEXT("%s saved photo album '%s' no longer exists; showing all photos."), *GetName(), *SelectedAlbumId);
+		SelectedAlbumId.Reset();
+		SaveUserSettings();
+		ScheduleAlbumReload();
+	}
+	OnUserSettingsChanged.Broadcast();
+}
+
+void AMemoryRoomManager::ScheduleAlbumReload()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(AlbumReloadTimerHandle, FTimerDelegate::CreateWeakLambda(this, [this]() { ReloadPhotoLibrary(); }), 0.6f, false);
+	}
+}
+
+FString AMemoryRoomManager::GetActiveBucketId() const
+{
+#if PLATFORM_ANDROID
+	return SelectedAlbumId == HeadsetFolderAlbumId ? FString() : SelectedAlbumId;
+#else
+	return FString();
+#endif
+}
+
+void AMemoryRoomManager::ApplyAlbumFilterToPhotoSource()
+{
+#if PLATFORM_ANDROID
+	if (PhotoSource)
+	{
+		static_cast<FAndroidMediaStorePhotoSource*>(PhotoSource.Get())->SetBucketFilter(GetActiveBucketId());
+	}
+#endif
+}
+
 bool AMemoryRoomManager::BuildGalleryFromDiscoveredPhotos()
 {
 #if PLATFORM_ANDROID
-	if (TryStartAndroidFolderLoad())
+	if (GetActiveBucketId().IsEmpty() && TryStartAndroidFolderLoad())
 	{
 		return true;
 	}
@@ -2157,6 +2361,7 @@ bool AMemoryRoomManager::StartAndroidMediaStoreDiagnosticLoad()
 		}
 
 		const int32 QueryLimit = FMath::Max(Manager->MaxPhotosToLoad > 0 ? Manager->MaxPhotosToLoad : 1000, 1);
+		Manager->ApplyAlbumFilterToPhotoSource();
 		Manager->PhotoSource->QueryPhotosAsync(0, QueryLimit, FMemoryPhotoMetadataPageCallback::CreateLambda([WeakThis](bool bSuccess, const TArray<FMemoryPhotoMetadata>& Photos, int32 TotalCount)
 		{
 			AMemoryRoomManager* M = WeakThis.Get();
