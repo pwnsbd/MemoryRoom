@@ -313,6 +313,17 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
 	FString LeftHandGraspAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Left_MetaQuestPro_GripTrigger_Down.Anim_OpenXRHand_Left_MetaQuestPro_GripTrigger_Down");
 
+	// Meta's static controller model, attached to each grip controller at identity so the hand
+	// holds it. The stock device-visualization models are hidden on any side that has a hand.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
+	bool bShowControllerModels = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
+	FString LeftControllerMeshPath = TEXT("/Game/MetaHands/Models/Controllers/MetaQuestPro/SM_MetaQuestPro_Left.SM_MetaQuestPro_Left");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
+	FString RightControllerMeshPath = TEXT("/Game/MetaHands/Models/Controllers/MetaQuestPro/SM_MetaQuestPro_Right.SM_MetaQuestPro_Right");
+
 	// Where the wrist sits relative to the controller, right hand. Starting value taken from
 	// the Interaction SDK's controller-driven hand target (IsdkXRUtils.h, expressed in its
 	// controller-mesh space), so it is a first guess in grip-pose axes, not a calibrated one.

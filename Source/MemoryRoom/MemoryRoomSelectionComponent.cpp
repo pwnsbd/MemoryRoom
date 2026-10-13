@@ -23,6 +23,8 @@
 #include "IMotionController.h"
 #include "MotionControllerComponent.h"
 #include "XRDeviceVisualizationComponent.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "AMemoryRoomManager.h"
 #include "MemoryPhotoActor.h"
 #include "MemoryPanoramaActor.h"
@@ -203,6 +205,28 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 	// meshes are unavailable and the controller models stay on.
 	const UXRDeviceVisualizationComponent* Style = Existing.Num() > 0 ? Existing[0] : nullptr;
 
+	// A side that gets a hand mesh loses every stock controller model on that side, including
+	// the one under the aim-pose controller (which never carries a hand itself). A side whose
+	// mesh failed to load keeps its model as the fallback.
+	const bool bRightHanded = RightMesh != nullptr;
+	const bool bLeftHanded = LeftMesh != nullptr && bUseHandMeshOnLeft;
+	for (UXRDeviceVisualizationComponent* Visualization : Existing)
+	{
+		const UMotionControllerComponent* VisualizationParent = Visualization ? Cast<UMotionControllerComponent>(Visualization->GetAttachParent()) : nullptr;
+		if (!VisualizationParent)
+		{
+			continue;
+		}
+		const FString ParentSource = VisualizationParent->GetTrackingMotionSource().ToString();
+		if ((bLeftHanded && ParentSource.StartsWith(TEXT("Left"))) || (bRightHanded && ParentSource.StartsWith(TEXT("Right"))))
+		{
+			Visualization->SetIsVisualizationActive(false);
+			Visualization->SetVisibility(false, true);
+		}
+	}
+
+	UStaticMesh* LeftControllerMesh = bShowControllerModels ? LoadObject<UStaticMesh>(nullptr, *LeftControllerMeshPath) : nullptr;
+	UStaticMesh* RightControllerMesh = bShowControllerModels ? LoadObject<UStaticMesh>(nullptr, *RightControllerMeshPath) : nullptr;
 	for (UMotionControllerComponent* Controller : Controllers)
 	{
 		if (!Controller)
@@ -251,6 +275,23 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 			Hand->SetRelativeLocation(bIsLeft ? LeftHandRelativeLocation : RightHandRelativeLocation);
 			Hand->SetRelativeRotation(bIsLeft ? LeftHandRelativeRotation : RightHandRelativeRotation);
 			Hand->RegisterComponent();
+
+			// The static controller model sits at the grip pose with no offset, which is where the
+			// SDK puts it; the hand's own offset above is what lines the palm up around it.
+			if (UStaticMesh* ControllerMesh = bIsLeft ? LeftControllerMesh : RightControllerMesh)
+			{
+				const FName ModelName = MakeUniqueObjectName(Owner, UStaticMeshComponent::StaticClass(), *FString::Printf(TEXT("%sModel"), *Controller->GetName()));
+				UStaticMeshComponent* Model = NewObject<UStaticMeshComponent>(Owner, ModelName);
+				if (Model)
+				{
+					Model->SetStaticMesh(ControllerMesh);
+					Model->SetupAttachment(Controller);
+					Model->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+					Model->SetCastShadow(false);
+					Model->SetRelativeTransform(FTransform::Identity);
+					Model->RegisterComponent();
+				}
+			}
 
 			if (GraspAnim)
 			{
