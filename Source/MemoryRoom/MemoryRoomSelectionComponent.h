@@ -301,24 +301,35 @@ protected:
 	// Left and right have separate meshes and clips, so nothing is mirrored. Pointing these back
 	// at /Game/XRMannequins/Meshes/SKM_MannyXR_right (right only) restores the old mannequin.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FString HandMeshPath = TEXT("/Game/MetaHands/Models/Hands/SK_OpenXRHand_Right.SK_OpenXRHand_Right");
+	FString RightHandMeshPath = TEXT("/Game/MetaHands/Models/Hands/SK_OpenXRHand_Right.SK_OpenXRHand_Right");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
 	FString LeftHandMeshPath = TEXT("/Game/MetaHands/Models/Hands/SK_OpenXRHand_Left.SK_OpenXRHand_Left");
 
 	// The open-to-fist clip the curl scrubs through, one per hand like the meshes.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FString HandGraspAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Right_MetaQuestPro_GripTrigger_Down.Anim_OpenXRHand_Right_MetaQuestPro_GripTrigger_Down");
+	FString RightHandGraspAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Right_MetaQuestPro_GripTrigger_Down.Anim_OpenXRHand_Right_MetaQuestPro_GripTrigger_Down");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
 	FString LeftHandGraspAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Left_MetaQuestPro_GripTrigger_Down.Anim_OpenXRHand_Left_MetaQuestPro_GripTrigger_Down");
+
+	// Meta's static controller model, attached to each grip controller at identity so the hand
+	// holds it. The stock device-visualization models are hidden on any side that has a hand.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
+	bool bShowControllerModels = true;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
+	FString LeftControllerMeshPath = TEXT("/Game/MetaHands/Models/Controllers/MetaQuestPro/SM_MetaQuestPro_Left.SM_MetaQuestPro_Left");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
+	FString RightControllerMeshPath = TEXT("/Game/MetaHands/Models/Controllers/MetaQuestPro/SM_MetaQuestPro_Right.SM_MetaQuestPro_Right");
 
 	// Where the wrist sits relative to the controller, right hand. Starting value taken from
 	// the Interaction SDK's controller-driven hand target (IsdkXRUtils.h, expressed in its
 	// controller-mesh space), so it is a first guess in grip-pose axes, not a calibrated one.
 	// Locations are still that SDK guess; only the rotations below have been calibrated.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FVector HandRelativeLocation = FVector(-10.5f, 3.0f, -4.2f);
+	FVector RightHandRelativeLocation = FVector(-10.5f, 3.0f, -4.2f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
 	FVector LeftHandRelativeLocation = FVector(-10.5f, -3.0f, -4.2f);
