@@ -9,13 +9,18 @@
 class UMotionControllerComponent;
 class USkeletalMeshComponent;
 class UAnimSequence;
+class UInputAction;
+class UInputMappingContext;
+class UMemoryRoomHandAnimInstance;
 
 // Draws the Meta Quest Pro controllers and the Meta OpenXR hands holding them, placed the way the
 // Meta Interaction SDK places them (UIsdkControllerVisualsRigComponent::ApplyControllerDrivenHandOffset):
 // the controller mesh sits on a clean grip-pose motion controller, the hand is attached to the
 // controller mesh, and the hand is moved until its wrist bone lands on the SDK's target transform.
-// Purely visual - it reads no input except the curl value pushed into SetCurl, and its grip
-// controllers are tagged "MemoryRoomVisualGrip" so pointer lookups skip them.
+// The fingers follow the real controller: grip squeezes the middle/ring/little fingers and the
+// trigger curls the index finger (UMemoryRoomHandAnimInstance), read through a runtime Enhanced
+// Input context this component adds itself. SetCurl is an extra minimum grip so a grab-hold still
+// closes the hand. Its grip controllers are tagged "MemoryRoomVisualGrip" so pointer lookups skip them.
 UCLASS(ClassGroup = (MemoryRoom), meta = (BlueprintSpawnableComponent))
 class MEMORYROOM_API UMemoryRoomHandVisualsComponent : public UActorComponent
 {
@@ -24,7 +29,7 @@ class MEMORYROOM_API UMemoryRoomHandVisualsComponent : public UActorComponent
 public:
 	UMemoryRoomHandVisualsComponent();
 
-	// 0 = open hand, 1 = closed fist. Scrubs that side's grasp clip.
+	// 0 = open hand, 1 = closed fist. A floor for that side's grip alpha: the hand closes at least this far.
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Hands")
 	void SetCurl(bool bLeft, float Value);
 
@@ -47,7 +52,19 @@ public:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Hands")
 	FString RightHandMeshPath = TEXT("/Game/MetaHands/Models/Hands/SK_OpenXRHand_Right.SK_OpenXRHand_Right");
 
-	// The open-to-fist clip SetCurl scrubs through, one per hand.
+	// The open pose and the single-pose clips the fingers blend toward, one per hand.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Hands")
+	FString LeftIdleAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Left_MetaQuestPro_Idle.Anim_OpenXRHand_Left_MetaQuestPro_Idle");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Hands")
+	FString RightIdleAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Right_MetaQuestPro_Idle.Anim_OpenXRHand_Right_MetaQuestPro_Idle");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Hands")
+	FString LeftTriggerAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Left_MetaQuestPro_FrontTrigger_Down.Anim_OpenXRHand_Left_MetaQuestPro_FrontTrigger_Down");
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Hands")
+	FString RightTriggerAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Right_MetaQuestPro_FrontTrigger_Down.Anim_OpenXRHand_Right_MetaQuestPro_FrontTrigger_Down");
+
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Hands")
 	FString LeftGraspAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Left_MetaQuestPro_GripTrigger_Down.Anim_OpenXRHand_Left_MetaQuestPro_GripTrigger_Down");
 
@@ -83,11 +100,25 @@ private:
 		USkeletalMeshComponent* Controller = nullptr;
 		USkeletalMeshComponent* Hand = nullptr;
 		UAnimSequence* GraspAnim = nullptr;
+		UMemoryRoomHandAnimInstance* AnimInstance = nullptr;
+		UInputAction* GripAction = nullptr;
+		UInputAction* TriggerAction = nullptr;
+		float Curl = 0.0f;
 		FTransform WristTarget = FTransform::Identity;
 	};
 
 	void BuildSide(bool bLeft, FSide& Side);
 	void SolveWrist(FSide& Side) const;
+	// Builds the runtime Enhanced Input actions and context. Retried each tick until the pawn has
+	// a local player to hold them (it is not possessed yet at BeginPlay).
+	void TryRegisterInput();
+	void CreateInputObjects();
+	void ReadInput(FSide& Side) const;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UInputMappingContext> InputContext;
+
+	bool bInputRegistered = false;
 
 	// Held in UPROPERTYs so the garbage collector sees the raw pointers in FSide.
 	UPROPERTY(Transient)
