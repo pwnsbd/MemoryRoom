@@ -103,7 +103,10 @@ void UMemoryRoomHandVisualsComponent::BuildSide(bool bLeft, FSide& Side)
 	// lookup name-matches pawn components, so renaming them could change what it attaches to.
 	const TCHAR* GripName = bLeft ? TEXT("MemoryRoomLeftGrip") : TEXT("MemoryRoomRightGrip");
 	Side.Grip = NewObject<UMotionControllerComponent>(Owner, MakeUniqueObjectName(Owner, UMotionControllerComponent::StaticClass(), GripName));
-	Side.Grip->SetTrackingMotionSource(bLeft ? IMotionController::LeftHandSourceId : IMotionController::RightHandSourceId);
+	// The AIM pose, not the grip: the SDK switches its controller to LeftAim/RightAim whenever a
+	// controller is tracked (IsdkFromOpenXRControllerDataSource.cpp:181-184), so its controller-mesh
+	// and wrist targets are relative to the aim pose. On the grip pose everything sits ~90 deg off.
+	Side.Grip->SetTrackingMotionSource(bLeft ? FName(TEXT("LeftAim")) : FName(TEXT("RightAim")));
 	Side.Grip->ComponentTags.Add(VisualGripTag);
 	Side.Grip->SetupAttachment(Parent ? Parent : Owner->GetRootComponent());
 	Side.Grip->SetRelativeTransform(FTransform::Identity);
