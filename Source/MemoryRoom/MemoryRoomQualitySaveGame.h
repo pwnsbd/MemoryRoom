@@ -50,4 +50,9 @@ public:
 
 	UPROPERTY(BlueprintReadWrite, Category = "Memory Room|Settings")
 	EMemoryRoomThemeId ThemeId = EMemoryRoomThemeId::Hearth;
+
+	// Which album the gallery shows: MediaStore bucket id on Android, folder path on PC.
+	// Empty = all photos.
+	UPROPERTY(BlueprintReadWrite, Category = "Memory Room|Settings")
+	FString PhotoAlbumId;
 };
