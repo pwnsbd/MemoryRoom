@@ -112,6 +112,9 @@ void UMemoryRoomSelectionComponent::PostInitProperties()
 	ApplyDefaultComponentReferences();
 }
 
+// Marks the runtime grip controllers that only carry hand and controller meshes.
+static const FName VisualGripTag(TEXT("MemoryRoomVisualGrip"));
+
 void UMemoryRoomSelectionComponent::BeginPlay()
 {
 	Super::BeginPlay();
@@ -138,33 +141,39 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 		return;
 	}
 
-	// The pawn's controllers may track the aim pose only (the right one does in BP_VRPawn - the
-	// laser and selection read it, so it must stay as it is). A hand needs a grip pose, so when
-	// a side has none, add a dedicated grip controller next to the existing one. It carries no
-	// selection or aim logic: the pointer code resolves controllers by name or by the exact
-	// "Left" grip source, and the calibration overlay only draws debug arrows.
-	auto EnsureGripController = [this, Owner, &Controllers](const FName GripSource, const FName GripAlias, const TCHAR* SidePrefix, const TCHAR* NewName)
+	// Log what the pawn's own controllers really are, once, so the Blueprint's customised
+	// sources and transforms can be read straight from the log instead of guessed at.
+	for (UMotionControllerComponent* Controller : Controllers)
 	{
-		UMotionControllerComponent* SideController = nullptr;
-		for (UMotionControllerComponent* Controller : Controllers)
+		if (!Controller)
 		{
-			if (!Controller)
+			continue;
+		}
+		const USceneComponent* AttachParent = Controller->GetAttachParent();
+		UE_LOG(LogMemoryRoom, Log, TEXT("%s motion controller %s: source %s, parent %s, relative location %s, relative rotation %s."), *GetNameSafe(this), *Controller->GetName(), *Controller->GetTrackingMotionSource().ToString(), *GetNameSafe(AttachParent), *Controller->GetRelativeLocation().ToString(), *Controller->GetRelativeRotation().ToString());
+	}
+
+	// The pawn's own controllers cannot be trusted as a reference frame (BP_VRPawn customised
+	// them), and the right one tracks the aim pose that the laser and selection read. So hands
+	// and controller models never go on them: each side gets a clean grip-pose controller of its
+	// own, at identity, under the same parent. It carries no selection or aim logic, and is tagged
+	// so the pointer lookups skip it.
+	const TArray<UMotionControllerComponent*> PawnControllers = Controllers;
+	auto CreateVisualGrip = [this, Owner, &Controllers, &PawnControllers](const FName GripSource, const FName SidePrefix, const TCHAR* NewName)
+	{
+		// Share the parent of that side's existing controller so the tracking space matches.
+		UMotionControllerComponent* ParentSource = nullptr;
+		for (UMotionControllerComponent* Controller : PawnControllers)
+		{
+			if (Controller && !ParentSource && Controller->GetTrackingMotionSource().ToString().StartsWith(SidePrefix.ToString()))
 			{
-				continue;
-			}
-			const FName Source = Controller->GetTrackingMotionSource();
-			if (Source == GripSource || Source == GripAlias)
-			{
-				return;
-			}
-			if (!SideController && Source.ToString().StartsWith(SidePrefix))
-			{
-				SideController = Controller;
+				ParentSource = Controller;
 			}
 		}
-
-		// Share the parent of that side's existing controller so the tracking space matches.
-		UMotionControllerComponent* ParentSource = SideController ? SideController : Controllers[0];
+		if (!ParentSource)
+		{
+			ParentSource = PawnControllers[0];
+		}
 		USceneComponent* Parent = ParentSource ? ParentSource->GetAttachParent() : nullptr;
 
 		const FName ControllerName = MakeUniqueObjectName(Owner, UMotionControllerComponent::StaticClass(), NewName);
@@ -174,15 +183,16 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 			return;
 		}
 		GripController->SetTrackingMotionSource(GripSource);
+		GripController->ComponentTags.Add(VisualGripTag);
 		GripController->SetupAttachment(Parent ? Parent : Owner->GetRootComponent());
+		GripController->SetRelativeTransform(FTransform::Identity);
 		GripController->RegisterComponent();
 		Controllers.Add(GripController);
 
-		UE_LOG(LogMemoryRoom, Log, TEXT("%s created grip controller %s (motion source %s)."), *GetNameSafe(this), *GripController->GetName(), *GripSource.ToString());
+		UE_LOG(LogMemoryRoom, Log, TEXT("%s created visual grip controller %s (motion source %s, parent %s)."), *GetNameSafe(this), *GripController->GetName(), *GripSource.ToString(), *GetNameSafe(Parent));
 	};
-	EnsureGripController(IMotionController::LeftHandSourceId, FName(TEXT("LeftGrip")), TEXT("Left"), TEXT("LeftGripController"));
-	EnsureGripController(IMotionController::RightHandSourceId, FName(TEXT("RightGrip")), TEXT("Right"), TEXT("RightGripController"));
-
+	CreateVisualGrip(IMotionController::LeftHandSourceId, FName(TEXT("Left")), TEXT("MemoryRoomLeftGrip"));
+	CreateVisualGrip(IMotionController::RightHandSourceId, FName(TEXT("Right")), TEXT("MemoryRoomRightGrip"));
 	USkeletalMesh* RightMesh = bUseHandMeshes ? LoadObject<USkeletalMesh>(nullptr, *RightHandMeshPath) : nullptr;
 	USkeletalMesh* LeftMesh = bUseHandMeshes ? LoadObject<USkeletalMesh>(nullptr, *LeftHandMeshPath) : nullptr;
 	UAnimSequence* RightGraspAnim = RightMesh ? LoadObject<UAnimSequence>(nullptr, *RightHandGraspAnimPath) : nullptr;
@@ -229,7 +239,7 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 	UStaticMesh* RightControllerMesh = bShowControllerModels ? LoadObject<UStaticMesh>(nullptr, *RightControllerMeshPath) : nullptr;
 	for (UMotionControllerComponent* Controller : Controllers)
 	{
-		if (!Controller)
+		if (!Controller || !Controller->ComponentHasTag(VisualGripTag))
 		{
 			continue;
 		}
@@ -261,23 +271,9 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 				}
 			}
 
-			const FName HandName = MakeUniqueObjectName(Owner, USkeletalMeshComponent::StaticClass(), *FString::Printf(TEXT("%sHand"), *Controller->GetName()));
-			USkeletalMeshComponent* Hand = NewObject<USkeletalMeshComponent>(Owner, HandName);
-			if (!Hand)
-			{
-				continue;
-			}
-
-			Hand->SetSkeletalMesh(HandMesh);
-			Hand->SetupAttachment(Controller);
-			Hand->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-			Hand->SetCastShadow(false);
-			Hand->SetRelativeLocation(bIsLeft ? LeftHandRelativeLocation : RightHandRelativeLocation);
-			Hand->SetRelativeRotation(bIsLeft ? LeftHandRelativeRotation : RightHandRelativeRotation);
-			Hand->RegisterComponent();
-
-			// The static controller model sits at the grip pose with no offset, which is where the
-			// SDK puts it; the hand's own offset above is what lines the palm up around it.
+			// The static controller model sits at the grip pose with no offset, as in the SDK, and
+			// the hand hangs off it: the hand offset is relative to the controller mesh.
+			USceneComponent* HandParent = Controller;
 			if (UStaticMesh* ControllerMesh = bIsLeft ? LeftControllerMesh : RightControllerMesh)
 			{
 				const FName ModelName = MakeUniqueObjectName(Owner, UStaticMeshComponent::StaticClass(), *FString::Printf(TEXT("%sModel"), *Controller->GetName()));
@@ -290,9 +286,24 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 					Model->SetCastShadow(false);
 					Model->SetRelativeTransform(FTransform::Identity);
 					Model->RegisterComponent();
+					HandParent = Model;
 				}
 			}
 
+			const FName HandName = MakeUniqueObjectName(Owner, USkeletalMeshComponent::StaticClass(), *FString::Printf(TEXT("%sHand"), *Controller->GetName()));
+			USkeletalMeshComponent* Hand = NewObject<USkeletalMeshComponent>(Owner, HandName);
+			if (!Hand)
+			{
+				continue;
+			}
+
+			Hand->SetSkeletalMesh(HandMesh);
+			Hand->SetupAttachment(HandParent);
+			Hand->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+			Hand->SetCastShadow(false);
+			Hand->SetRelativeLocation(bIsLeft ? LeftHandOffsetFromControllerLocation : RightHandOffsetFromControllerLocation);
+			Hand->SetRelativeRotation(bIsLeft ? LeftHandOffsetFromControllerRotation : RightHandOffsetFromControllerRotation);
+			Hand->RegisterComponent();
 			if (GraspAnim)
 			{
 				// Not played, scrubbed: the clip is the curl from open to fist, and the curl
@@ -1394,7 +1405,7 @@ USceneComponent* UMemoryRoomSelectionComponent::ResolveLeftPointerComponent()
 	Owner->GetComponents<UMotionControllerComponent>(Controllers);
 	for (UMotionControllerComponent* Controller : Controllers)
 	{
-		if (!Controller)
+		if (!Controller || Controller->ComponentHasTag(VisualGripTag))
 		{
 			continue;
 		}
