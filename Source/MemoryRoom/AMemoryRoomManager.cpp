@@ -1636,7 +1636,8 @@ void AMemoryRoomManager::ApplyTheme()
 
 	if (AMemoryRoomDustActor* Dust = FindDustActor())
 	{
-		Dust->SetMoteStyle(Theme->MoteStyle);
+		// The theme sets a default style, but the user's menu choice always wins.
+		Dust->SetMoteStyle(ParticleStyle);
 		Dust->SetDustTint(Theme->DustTint);
 	}
 
@@ -1729,7 +1730,8 @@ void AMemoryRoomManager::GetUserSettingParts(EMemoryRoomUserSetting Setting, FTe
 		return Row(TEXT("Thumbnail Quality"), Q);
 	}
 	case EMemoryRoomUserSetting::Theme:
-		return Row(TEXT("Theme"), FallbackThemeId == EMemoryRoomThemeId::Void ? TEXT("Void") : TEXT("Hearth"));
+		// Enum entry keeps its old name (Blueprint may reference it); the row is now the particle style.
+		return Row(TEXT("Particles"), ParticleStyle == EMemoryRoomMoteStyle::Leaf ? TEXT("Leaves") : TEXT("Dust"));
 	case EMemoryRoomUserSetting::Float:
 		return Row(TEXT("Float"), bFloatEnabled ? TEXT("On") : TEXT("Off"));
 	case EMemoryRoomUserSetting::PhotoAlbum:
@@ -1786,9 +1788,8 @@ void AMemoryRoomManager::AdjustUserSetting(EMemoryRoomUserSetting Setting, int32
 		CycleThumbnailQuality();
 		break;
 	case EMemoryRoomUserSetting::Theme:
-		// Only two built-in themes exist right now, so either arrow just swaps between them -
-		// same "ignore Direction's sign" idea ThumbnailQuality's cycle uses above.
-		FallbackThemeId = (FallbackThemeId == EMemoryRoomThemeId::Void) ? EMemoryRoomThemeId::Hearth : EMemoryRoomThemeId::Void;
+		// Two styles, so either arrow just swaps between them.
+		ParticleStyle = (ParticleStyle == EMemoryRoomMoteStyle::Dust) ? EMemoryRoomMoteStyle::Leaf : EMemoryRoomMoteStyle::Dust;
 		break;
 	case EMemoryRoomUserSetting::Float:
 		bFloatEnabled = !bFloatEnabled;
@@ -1849,12 +1850,10 @@ void AMemoryRoomManager::PushUserSettingToWorld(EMemoryRoomUserSetting Setting, 
 		}
 		break;
 	case EMemoryRoomUserSetting::Theme:
-		// ResolveTheme prefers CurrentTheme unconditionally (see ApplyTheme), so this has no
-		// visible effect once a real theme asset is ever assigned there - same as today, just
-		// now reachable live instead of only at BeginPlay. Clearing the cached ActiveTheme forces
-		// ResolveTheme to re-synthesise off the new FallbackThemeId instead of reusing the old one.
-		ActiveTheme = nullptr;
-		ApplyTheme();
+		if (AMemoryRoomDustActor* Dust = FindDustActor())
+		{
+			Dust->SetMoteStyle(ParticleStyle);
+		}
 		break;
 	default:
 		break;
@@ -1874,22 +1873,16 @@ void AMemoryRoomManager::ApplyUserSettings()
 			PhotoGlowLightIntensity = FMath::Clamp(Save->NightPhotoGlow, 0.0f, 14.0f);
 			DustAmountLevel = FMath::Clamp(Save->DustAmountLevel, 0, 3);
 			SelectedAlbumId = Save->PhotoAlbumId;
-			// BeginPlay calls ApplyTheme() before this (see the order there), so it has already
-			// synthesised and cached ActiveTheme off the default FallbackThemeId - if the saved
-			// choice differs, clear that cache and re-resolve now so the room opens on whichever
-			// theme was actually chosen last, not always Hearth.
-			if (FallbackThemeId != Save->ThemeId)
-			{
-				FallbackThemeId = Save->ThemeId;
-				ActiveTheme = nullptr;
-				ApplyTheme();
-			}
+			// The app always uses Hearth, so a saved ThemeId (e.g. the retired Void) is ignored.
+			ParticleStyle = Save->ParticleStyle;
 		}
 	}
 
 	if (AMemoryRoomDustActor* Dust = FindDustActor())
 	{
 		Dust->SetDensityLevel(DustAmountLevel);
+		// BeginPlay's ApplyTheme() ran before this with the default style; apply the saved one.
+		Dust->SetMoteStyle(ParticleStyle);
 	}
 	LastAppliedPhotoBrightness = -1.0f;
 }
@@ -1905,7 +1898,8 @@ void AMemoryRoomManager::SaveUserSettings() const
 	Save->ScrollSpeed = MaximumScrollSpeed;
 	Save->NightPhotoGlow = PhotoGlowLightIntensity;
 	Save->DustAmountLevel = DustAmountLevel;
-	Save->ThemeId = FallbackThemeId;
+	Save->ThemeId = EMemoryRoomThemeId::Hearth;
+	Save->ParticleStyle = ParticleStyle;
 	Save->PhotoAlbumId = SelectedAlbumId;
 	UGameplayStatics::SaveGameToSlot(Save, MemoryRoomSaveSlot, 0);
 }
