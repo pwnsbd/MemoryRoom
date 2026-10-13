@@ -19,7 +19,7 @@
 #include "Engine/SkeletalMesh.h"
 #include "IMotionController.h"
 #include "MotionControllerComponent.h"
-#include "MemoryRoomHandVisuals.h"
+#include "MemoryRoomMetaRig.h"
 #include "Components/StaticMeshComponent.h"
 #include "Engine/StaticMesh.h"
 #include "AMemoryRoomManager.h"
@@ -109,7 +109,7 @@ void UMemoryRoomSelectionComponent::PostInitProperties()
 	ApplyDefaultComponentReferences();
 }
 
-// Tag on the grip controllers UMemoryRoomHandVisualsComponent builds; pointer lookups skip them.
+// Tag on the runtime controllers UMemoryRoomMetaRigComponent builds; pointer lookups skip them.
 static const FName SelectionVisualGripTag(TEXT("MemoryRoomVisualGrip"));
 
 void UMemoryRoomSelectionComponent::BeginPlay()
@@ -120,48 +120,11 @@ void UMemoryRoomSelectionComponent::BeginPlay()
 	ResolveCameraComponent();
 	EnsurePointerComponents();
 	EnsureLeftPointerComponents();
-	HandVisuals = NewObject<UMemoryRoomHandVisualsComponent>(GetOwner(), TEXT("MemoryRoomHandVisuals"));
-	if (HandVisuals)
+	MetaRig = NewObject<UMemoryRoomMetaRigComponent>(GetOwner(), TEXT("MemoryRoomMetaRig"));
+	if (MetaRig)
 	{
-		HandVisuals->RegisterComponent();
+		MetaRig->RegisterComponent();
 	}
-}
-
-void UMemoryRoomSelectionComponent::SetHandCurlInput(float GripValue, float TriggerValue)
-{
-	// Two inputs, one curl. The grip closes the hand the whole way; the trigger only pulls it
-	// part-way, so a trigger press reads as reaching for something and a grip reads as having
-	// hold of it. Whichever is asking for more curl wins.
-	const float FromGrip = FMath::Clamp(GripValue, 0.0f, 1.0f);
-	const float FromTrigger = FMath::Clamp(TriggerValue, 0.0f, 1.0f) * FMath::Clamp(TriggerCurlAmount, 0.0f, 1.0f);
-	AnalogHandCurl = FMath::Max(FromGrip, FromTrigger);
-}
-
-void UMemoryRoomSelectionComponent::UpdateHandCurl(float DeltaTime)
-{
-	if (!HandVisuals)
-	{
-		return;
-	}
-
-	// The trigger is bound as a press, not an axis, so it gets a short pulse that eases back
-	// out - a tap of the finger. Wire SetHandCurlInput to the real axes and this is simply
-	// overtaken by the analog value.
-	TriggerPulseSeconds = FMath::Max(TriggerPulseSeconds - DeltaTime, 0.0f);
-	const float FromTriggerPulse = TriggerPulseSeconds > 0.0f ? FMath::Clamp(TriggerCurlAmount, 0.0f, 1.0f) : 0.0f;
-
-	// A held grab always wins: the fist has to be closed for as long as the photo is held,
-	// however the trigger and the analog inputs happen to be sitting.
-	TargetHandCurl = FMath::Max3(bGrabCurlHeld ? 1.0f : 0.0f, AnalogHandCurl, FromTriggerPulse);
-
-	// Snapping straight to the target looks like the fingers teleport, so ease in over
-	// HandCurlInterpSpeed. At the default this closes in about a tenth of a second - fast
-	// enough that the fist still lands on the frame the grab fires.
-	CurrentHandCurl = FMath::FInterpTo(CurrentHandCurl, TargetHandCurl, DeltaTime, FMath::Max(HandCurlInterpSpeed, 0.1f));
-
-	// One shared curl value drives both hands, as before.
-	HandVisuals->SetCurl(true, CurrentHandCurl);
-	HandVisuals->SetCurl(false, CurrentHandCurl);
 }
 
 void UMemoryRoomSelectionComponent::ApplyDefaultComponentReferences()
@@ -215,7 +178,6 @@ void UMemoryRoomSelectionComponent::TickComponent(float DeltaTime, ELevelTick Ti
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	UpdateHandCurl(DeltaTime);
 	if (IsPanoramaOpen())
 	{
 		UpdateHoveredPhoto(HoveredPhoto, nullptr, FVector::ZeroVector);
@@ -232,9 +194,9 @@ void UMemoryRoomSelectionComponent::TickComponent(float DeltaTime, ELevelTick Ti
 	USceneComponent* LeftPointer = ResolveLeftPointerComponent();
 	// The left RAY runs from the aim pose like the right one; LeftPointer (grip) stays for grab/hold.
 	USceneComponent* LeftAimPointer = nullptr;
-	if (HandVisuals)
+	if (MetaRig)
 	{
-		LeftAimPointer = HandVisuals->GetGripController(true);
+		LeftAimPointer = MetaRig->GetLeftAimController();
 	}
 	if (!LeftAimPointer)
 	{
@@ -388,9 +350,6 @@ void UMemoryRoomSelectionComponent::UpdatePinchZoom(float DeltaTime, USceneCompo
 void UMemoryRoomSelectionComponent::ActivateHoveredPhoto(EMemoryRoomHand Hand)
 {
 	if (IsPanoramaOpen()) { ClosePanorama(); return; }
-	// Before any of the early-outs below: the finger moves because the trigger was pulled,
-	// not because the pull happened to land on something.
-	TriggerPulseSeconds = FMath::Max(TriggerPulseDuration, 0.0f);
 
 	// Pulling the trigger on the hand currently holding a photo sends it straight back to the
 	// gallery instead of placing it on release - un-places it first if it was already a placed
@@ -417,7 +376,6 @@ void UMemoryRoomSelectionComponent::ActivateHoveredPhoto(EMemoryRoomHand Hand)
 			}
 			GrabbedPhoto.Reset();
 			bSecondaryGrabHandHeld = false;
-			bGrabCurlHeld = false;
 
 			if (bDebugSelectionLog)
 			{
@@ -502,10 +460,6 @@ void UMemoryRoomSelectionComponent::ActivateHoveredPhoto(EMemoryRoomHand Hand)
 void UMemoryRoomSelectionComponent::GrabHoveredPhoto(EMemoryRoomHand Hand)
 {
 	if (IsPanoramaOpen()) { ClosePanorama(); return; }
-	// Set before the early-outs, so the hand closes the instant the grab input fires whether
-	// or not there was a photo under it to take. Shared across both hands since only the right
-	// hand mesh is ever actually shown - true while anything is held.
-	bGrabCurlHeld = true;
 
 	const bool bIsLeft = Hand == EMemoryRoomHand::Left;
 	TWeakObjectPtr<AMemoryRoomMenuActor>& HoveredMenuRef = bIsLeft ? LeftHoveredMenu : HoveredMenu;
@@ -605,7 +559,6 @@ void UMemoryRoomSelectionComponent::ReleaseGrabbedPhoto(EMemoryRoomHand Hand)
 	AMemoryPhotoActor* Grabbed = GrabbedPhoto.Get();
 	if (!Grabbed)
 	{
-		bGrabCurlHeld = false;
 		return;
 	}
 
@@ -655,7 +608,6 @@ void UMemoryRoomSelectionComponent::ReleaseGrabbedPhoto(EMemoryRoomHand Hand)
 		}
 		GrabbedPhoto.Reset();
 		bSecondaryGrabHandHeld = false;
-		bGrabCurlHeld = false;
 
 		if (bDebugSelectionLog)
 		{
@@ -1530,7 +1482,7 @@ FVector UMemoryRoomSelectionComponent::GetHandAimDirection(EMemoryRoomHand Hand,
 	{
 		return FVector::ForwardVector;
 	}
-	// Aim-pose controllers (the hand-visuals LeftAim controller, tagged SelectionVisualGripTag, and the
+	// Aim-pose controllers (the Meta rig LeftAim controller, tagged SelectionVisualGripTag, and the
 	// right controller) follow the standard convention: local +X is the aim direction, which
 	// GetForwardVector() returns. Only the left GRIP pose is rotated: its local +Z is measured
 	// as backward, so -GetUpVector() is forward there (see quest-grip-pose-axes in project
@@ -1666,7 +1618,6 @@ void UMemoryRoomSelectionComponent::HandlePlacedPhotoUnplaced(AMemoryPhotoActor*
 		ExpandedPhoto.Reset();
 	}
 	GrabbedPhoto.Reset();
-	bGrabCurlHeld = false;
 	bSecondaryGrabHandHeld = false;
 
 	// Still mid-hold (bExpanded) as far as the actor itself knows - nothing else is going to
