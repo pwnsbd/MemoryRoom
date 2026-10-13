@@ -292,48 +292,43 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
 	bool bUseHandMeshes = true;
 
-	// The right hand's transform was solved from measured axes and holds up. The left hand's
-	// did not - two rounds of fixes still left it pointing the wrong way, because every fix
-	// was built on a guessed or mismeasured axis rather than the component's real configured
-	// values. Off until the left is recalibrated from BP_VRPawn's own Details panel (Motion
-	// Source, Relative Location/Rotation/Scale on LeftController) rather than from arrows and
-	// word descriptions; until then the left controller shows the plain stock model, same as
-	// bUseHandMeshes being off would give it.
+	// The Meta OpenXR hands (copied from the Interaction SDK into Content/MetaHands) each have
+	// their own mesh, so both hands are on. Turning this off drops the left controller back to
+	// the plain stock model, same as bUseHandMeshes being off would give it.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	bool bUseHandMeshOnLeft = false;
+	bool bUseHandMeshOnLeft = true;
 
-	// Only the right-hand mesh is used; the left is the same mesh mirrored (see
-	// EnsureHandVisuals).
+	// Left and right have separate meshes and clips, so nothing is mirrored. Pointing these back
+	// at /Game/XRMannequins/Meshes/SKM_MannyXR_right (right only) restores the old mannequin.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FString HandMeshPath = TEXT("/Game/XRMannequins/Meshes/SKM_MannyXR_right.SKM_MannyXR_right");
+	FString HandMeshPath = TEXT("/Game/MetaHands/Models/Hands/SK_OpenXRHand_Right.SK_OpenXRHand_Right");
 
-	// The open-to-fist clip the curl scrubs through. Right-hand only, like the mesh.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FString HandGraspAnimPath = TEXT("/Game/XRMannequins/Animations/A_MannequinsXR_Grasp_Right.A_MannequinsXR_Grasp_Right");
+	FString LeftHandMeshPath = TEXT("/Game/MetaHands/Models/Hands/SK_OpenXRHand_Left.SK_OpenXRHand_Left");
 
-	// Where the wrist sits relative to the controller. In grip-pose axes -X is downward and
-	// +Z is back toward the player, so this drops the wrist slightly below the controller and
-	// pulls it back along the forearm.
+	// The open-to-fist clip the curl scrubs through, one per hand like the meshes.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FVector HandRelativeLocation = FVector(-2.0f, 0.0f, 3.0f);
+	FString HandGraspAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Right_MetaQuestPro_GripTrigger_Down.Anim_OpenXRHand_Right_MetaQuestPro_GripTrigger_Down");
 
-	// Solved, not nudged. Two measured facts about the grip pose - it aims along -Z and its
-	// +X points up out of the top - and two facts about the mesh: the fingers run along the
-	// mesh's local +Y and the back of the hand faces its local +Z. The rotation that carries
-	// (fingers, back of hand) onto (aim, up) is the pair below.
-	//
-	// The finger axis is measured too: with the mesh pitched -90 the fingers came out along
-	// world left, which only holds if they run along +Y in mesh space. The back-of-hand axis
-	// is the one thing still assumed, and it only affects roll about the pointing direction -
-	// so if the hands aim correctly but are rolled wrong, move Roll in 90 degree steps.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FRotator RightHandRelativeRotation = FRotator(0.0f, -90.0f, 90.0f);
+	FString LeftHandGraspAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Left_MetaQuestPro_GripTrigger_Down.Anim_OpenXRHand_Left_MetaQuestPro_GripTrigger_Down");
 
-	// Mirrored on Y before the rotation is applied, so the left is not the right's rotation
-	// with a sign flipped - it is its own solution, and both yaw and roll come out opposite.
+	// Where the wrist sits relative to the controller, right hand. Starting value taken from
+	// the Interaction SDK's controller-driven hand target (IsdkXRUtils.h, expressed in its
+	// controller-mesh space), so it is a first guess in grip-pose axes, not a calibrated one.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FRotator LeftHandRelativeRotation = FRotator(0.0f, 90.0f, -90.0f);
+	FVector HandRelativeLocation = FVector(-10.5f, 3.0f, -4.2f);
 
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
+	FVector LeftHandRelativeLocation = FVector(-10.5f, -3.0f, -4.2f);
+
+	// Same source as the locations: the SDK's TargetControllerDrivenHandTransformRight / Left.
+	// Unverified on device. If the hands aim correctly but are rolled wrong, adjust Roll.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
+	FRotator RightHandRelativeRotation = FRotator(-90.0f, -165.0f, 0.0f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
+	FRotator LeftHandRelativeRotation = FRotator(90.0f, -15.0f, 0.0f);
 	// How far the trigger alone curls the hand. The grip always curls it the whole way.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float TriggerCurlAmount = 0.55f;

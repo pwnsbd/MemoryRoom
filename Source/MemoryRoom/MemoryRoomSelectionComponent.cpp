@@ -136,11 +136,17 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 		return;
 	}
 
-	USkeletalMesh* HandMesh = bUseHandMeshes ? LoadObject<USkeletalMesh>(nullptr, *HandMeshPath) : nullptr;
-	UAnimSequence* GraspAnim = HandMesh ? LoadObject<UAnimSequence>(nullptr, *HandGraspAnimPath) : nullptr;
-	if (bUseHandMeshes && !HandMesh)
+	USkeletalMesh* RightMesh = bUseHandMeshes ? LoadObject<USkeletalMesh>(nullptr, *HandMeshPath) : nullptr;
+	USkeletalMesh* LeftMesh = bUseHandMeshes ? LoadObject<USkeletalMesh>(nullptr, *LeftHandMeshPath) : nullptr;
+	UAnimSequence* RightGraspAnim = RightMesh ? LoadObject<UAnimSequence>(nullptr, *HandGraspAnimPath) : nullptr;
+	UAnimSequence* LeftGraspAnim = LeftMesh ? LoadObject<UAnimSequence>(nullptr, *LeftHandGraspAnimPath) : nullptr;
+	if (bUseHandMeshes && !RightMesh)
 	{
-		UE_LOG(LogMemoryRoom, Warning, TEXT("%s could not load the hand mesh at %s; falling back to the controller model."), *GetNameSafe(this), *HandMeshPath);
+		UE_LOG(LogMemoryRoom, Warning, TEXT("%s could not load the right hand mesh at %s; falling back to the controller model."), *GetNameSafe(this), *HandMeshPath);
+	}
+	if (bUseHandMeshes && bUseHandMeshOnLeft && !LeftMesh)
+	{
+		UE_LOG(LogMemoryRoom, Warning, TEXT("%s could not load the left hand mesh at %s; falling back to the controller model."), *GetNameSafe(this), *LeftHandMeshPath);
 	}
 
 	TArray<UXRDeviceVisualizationComponent*> Existing;
@@ -169,9 +175,10 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 			continue;
 		}
 
-		// The left hand's transform is not trusted yet - see bUseHandMeshOnLeft - so it drops
-		// through to the stock controller model below until it has been recalibrated from the
-		// component's own Details panel rather than guessed at again.
+		// The left hand can be switched off on its own - see bUseHandMeshOnLeft - in which case
+		// it drops through to the stock controller model below.
+		USkeletalMesh* HandMesh = bIsLeft ? LeftMesh : RightMesh;
+		UAnimSequence* GraspAnim = bIsLeft ? LeftGraspAnim : RightGraspAnim;
 		if (HandMesh && (!bIsLeft || bUseHandMeshOnLeft))
 		{
 			// The hand replaces the controller model rather than sitting on top of it.
@@ -195,13 +202,8 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 			Hand->SetupAttachment(Controller);
 			Hand->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 			Hand->SetCastShadow(false);
-			Hand->SetRelativeLocation(HandRelativeLocation);
+			Hand->SetRelativeLocation(bIsLeft ? LeftHandRelativeLocation : HandRelativeLocation);
 			Hand->SetRelativeRotation(bIsLeft ? LeftHandRelativeRotation : RightHandRelativeRotation);
-			// Only the right-hand mesh and animations ship with this project, so the left
-			// hand is the same mesh mirrored across its own Y axis. The geometry is a mirror
-			// of the right either way, and this keeps one animation driving both hands
-			// instead of needing a mirror table the anim graph would have to own.
-			Hand->SetRelativeScale3D(bIsLeft ? FVector(1.0f, -1.0f, 1.0f) : FVector::OneVector);
 			Hand->RegisterComponent();
 
 			if (GraspAnim)
@@ -223,7 +225,7 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 				RightHandMeshComponent = Hand;
 			}
 
-			UE_LOG(LogMemoryRoom, Log, TEXT("%s built a hand mesh for %s (motion source %s, %s)."), *GetNameSafe(this), *Controller->GetName(), *Source.ToString(), bIsLeft ? TEXT("mirrored") : TEXT("as authored"));
+			UE_LOG(LogMemoryRoom, Log, TEXT("%s built a hand mesh for %s (motion source %s, %s)."), *GetNameSafe(this), *Controller->GetName(), *Source.ToString(), bIsLeft ? TEXT("left mesh") : TEXT("right mesh"));
 			continue;
 		}
 
