@@ -110,7 +110,7 @@ void UMemoryRoomSelectionComponent::PostInitProperties()
 }
 
 // Tag on the grip controllers UMemoryRoomHandVisualsComponent builds; pointer lookups skip them.
-static const FName VisualGripTag(TEXT("MemoryRoomVisualGrip"));
+static const FName SelectionVisualGripTag(TEXT("MemoryRoomVisualGrip"));
 
 void UMemoryRoomSelectionComponent::BeginPlay()
 {
@@ -1031,7 +1031,7 @@ USceneComponent* UMemoryRoomSelectionComponent::ResolveLeftPointerComponent()
 	Owner->GetComponents<UMotionControllerComponent>(Controllers);
 	for (UMotionControllerComponent* Controller : Controllers)
 	{
-		if (!Controller || Controller->ComponentHasTag(VisualGripTag))
+		if (!Controller || Controller->ComponentHasTag(SelectionVisualGripTag))
 		{
 			continue;
 		}
@@ -1530,12 +1530,12 @@ FVector UMemoryRoomSelectionComponent::GetHandAimDirection(EMemoryRoomHand Hand,
 	{
 		return FVector::ForwardVector;
 	}
-	// Aim-pose controllers (the hand-visuals LeftAim controller, tagged VisualGripTag, and the
+	// Aim-pose controllers (the hand-visuals LeftAim controller, tagged SelectionVisualGripTag, and the
 	// right controller) follow the standard convention: local +X is the aim direction, which
 	// GetForwardVector() returns. Only the left GRIP pose is rotated: its local +Z is measured
 	// as backward, so -GetUpVector() is forward there (see quest-grip-pose-axes in project
 	// memory). That grip form is kept for the fallback and for grab orientation.
-	const bool bIsAimPose = Pointer->ComponentHasTag(VisualGripTag);
+	const bool bIsAimPose = Pointer->ComponentHasTag(SelectionVisualGripTag);
 	return (Hand == EMemoryRoomHand::Left && !bIsAimPose) ? -Pointer->GetUpVector() : Pointer->GetForwardVector();
 }
 
