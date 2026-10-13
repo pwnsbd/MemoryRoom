@@ -181,13 +181,13 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 	EnsureGripController(IMotionController::LeftHandSourceId, FName(TEXT("LeftGrip")), TEXT("Left"), TEXT("LeftGripController"));
 	EnsureGripController(IMotionController::RightHandSourceId, FName(TEXT("RightGrip")), TEXT("Right"), TEXT("RightGripController"));
 
-	USkeletalMesh* RightMesh = bUseHandMeshes ? LoadObject<USkeletalMesh>(nullptr, *HandMeshPath) : nullptr;
+	USkeletalMesh* RightMesh = bUseHandMeshes ? LoadObject<USkeletalMesh>(nullptr, *RightHandMeshPath) : nullptr;
 	USkeletalMesh* LeftMesh = bUseHandMeshes ? LoadObject<USkeletalMesh>(nullptr, *LeftHandMeshPath) : nullptr;
-	UAnimSequence* RightGraspAnim = RightMesh ? LoadObject<UAnimSequence>(nullptr, *HandGraspAnimPath) : nullptr;
+	UAnimSequence* RightGraspAnim = RightMesh ? LoadObject<UAnimSequence>(nullptr, *RightHandGraspAnimPath) : nullptr;
 	UAnimSequence* LeftGraspAnim = LeftMesh ? LoadObject<UAnimSequence>(nullptr, *LeftHandGraspAnimPath) : nullptr;
 	if (bUseHandMeshes && !RightMesh)
 	{
-		UE_LOG(LogMemoryRoom, Warning, TEXT("%s could not load the right hand mesh at %s; falling back to the controller model."), *GetNameSafe(this), *HandMeshPath);
+		UE_LOG(LogMemoryRoom, Warning, TEXT("%s could not load the right hand mesh at %s; falling back to the controller model."), *GetNameSafe(this), *RightHandMeshPath);
 	}
 	if (bUseHandMeshes && bUseHandMeshOnLeft && !LeftMesh)
 	{
@@ -248,7 +248,7 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 			Hand->SetupAttachment(Controller);
 			Hand->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 			Hand->SetCastShadow(false);
-			Hand->SetRelativeLocation(bIsLeft ? LeftHandRelativeLocation : HandRelativeLocation);
+			Hand->SetRelativeLocation(bIsLeft ? LeftHandRelativeLocation : RightHandRelativeLocation);
 			Hand->SetRelativeRotation(bIsLeft ? LeftHandRelativeRotation : RightHandRelativeRotation);
 			Hand->RegisterComponent();
 

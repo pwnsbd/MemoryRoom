@@ -301,14 +301,14 @@ protected:
 	// Left and right have separate meshes and clips, so nothing is mirrored. Pointing these back
 	// at /Game/XRMannequins/Meshes/SKM_MannyXR_right (right only) restores the old mannequin.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FString HandMeshPath = TEXT("/Game/MetaHands/Models/Hands/SK_OpenXRHand_Right.SK_OpenXRHand_Right");
+	FString RightHandMeshPath = TEXT("/Game/MetaHands/Models/Hands/SK_OpenXRHand_Right.SK_OpenXRHand_Right");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
 	FString LeftHandMeshPath = TEXT("/Game/MetaHands/Models/Hands/SK_OpenXRHand_Left.SK_OpenXRHand_Left");
 
 	// The open-to-fist clip the curl scrubs through, one per hand like the meshes.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FString HandGraspAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Right_MetaQuestPro_GripTrigger_Down.Anim_OpenXRHand_Right_MetaQuestPro_GripTrigger_Down");
+	FString RightHandGraspAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Right_MetaQuestPro_GripTrigger_Down.Anim_OpenXRHand_Right_MetaQuestPro_GripTrigger_Down");
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
 	FString LeftHandGraspAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Left_MetaQuestPro_GripTrigger_Down.Anim_OpenXRHand_Left_MetaQuestPro_GripTrigger_Down");
@@ -318,7 +318,7 @@ protected:
 	// controller-mesh space), so it is a first guess in grip-pose axes, not a calibrated one.
 	// Locations are still that SDK guess; only the rotations below have been calibrated.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FVector HandRelativeLocation = FVector(-10.5f, 3.0f, -4.2f);
+	FVector RightHandRelativeLocation = FVector(-10.5f, 3.0f, -4.2f);
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
 	FVector LeftHandRelativeLocation = FVector(-10.5f, -3.0f, -4.2f);
