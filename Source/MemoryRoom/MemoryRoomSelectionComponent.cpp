@@ -230,6 +230,16 @@ void UMemoryRoomSelectionComponent::TickComponent(float DeltaTime, ELevelTick Ti
 
 	USceneComponent* RightPointer = ResolvePointerComponent();
 	USceneComponent* LeftPointer = ResolveLeftPointerComponent();
+	// The left RAY runs from the aim pose like the right one; LeftPointer (grip) stays for grab/hold.
+	USceneComponent* LeftAimPointer = nullptr;
+	if (HandVisuals)
+	{
+		LeftAimPointer = HandVisuals->GetGripController(true);
+	}
+	if (!LeftAimPointer)
+	{
+		LeftAimPointer = LeftPointer;
+	}
 
 	if (AMemoryPhotoActor* Grabbed = GrabbedPhoto.Get())
 	{
@@ -257,7 +267,7 @@ void UMemoryRoomSelectionComponent::TickComponent(float DeltaTime, ELevelTick Ti
 	}
 
 	TickHandInteraction(EMemoryRoomHand::Right, RightPointer, PointerSplineComponent, BeamSplineMeshComponent, HitIndicatorComponent, true, HoveredMenu, HoveredSkyButton, HoveredPhoto);
-	TickHandInteraction(EMemoryRoomHand::Left, LeftPointer, LeftPointerSplineComponent, LeftBeamSplineMeshComponent, LeftHitIndicatorComponent, false, LeftHoveredMenu, LeftHoveredSkyButton, LeftHoveredPhoto);
+	TickHandInteraction(EMemoryRoomHand::Left, LeftAimPointer, LeftPointerSplineComponent, LeftBeamSplineMeshComponent, LeftHitIndicatorComponent, false, LeftHoveredMenu, LeftHoveredSkyButton, LeftHoveredPhoto);
 
 	if (AMemoryRoomManager* Manager = ResolveMemoryRoomManager())
 	{
@@ -1520,13 +1530,13 @@ FVector UMemoryRoomSelectionComponent::GetHandAimDirection(EMemoryRoomHand Hand,
 	{
 		return FVector::ForwardVector;
 	}
-	// The right controller follows the standard convention - local +X is its aim direction, the
-	// same axis GetForwardVector() already returns. The left controller does not: its local +Z
-	// is backward/toward the player, so its aim is the opposite of GetUpVector() (local +Z) -
-	// wait, local +Z read through GetUpVector()? No: GetUpVector() returns local +Z rotated to
-	// world, and the left's local +Z is measured as backward, so -GetUpVector() is forward/aim.
-	// See quest-grip-pose-axes in project memory for the measurement this is built from.
-	return Hand == EMemoryRoomHand::Left ? -Pointer->GetUpVector() : Pointer->GetForwardVector();
+	// Aim-pose controllers (the hand-visuals LeftAim controller, tagged VisualGripTag, and the
+	// right controller) follow the standard convention: local +X is the aim direction, which
+	// GetForwardVector() returns. Only the left GRIP pose is rotated: its local +Z is measured
+	// as backward, so -GetUpVector() is forward there (see quest-grip-pose-axes in project
+	// memory). That grip form is kept for the fallback and for grab orientation.
+	const bool bIsAimPose = Pointer->ComponentHasTag(VisualGripTag);
+	return (Hand == EMemoryRoomHand::Left && !bIsAimPose) ? -Pointer->GetUpVector() : Pointer->GetForwardVector();
 }
 
 FVector UMemoryRoomSelectionComponent::GetHandUpDirection(EMemoryRoomHand Hand, const USceneComponent* Pointer) const
