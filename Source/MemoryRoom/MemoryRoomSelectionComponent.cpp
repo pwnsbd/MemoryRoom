@@ -212,7 +212,7 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 	const bool bLeftHanded = LeftMesh != nullptr && bUseHandMeshOnLeft;
 	for (UXRDeviceVisualizationComponent* Visualization : Existing)
 	{
-		const UMotionControllerComponent* VisualizationParent = Visualization ? Cast<UMotionControllerComponent>(Visualization->GetAttachParent()) : nullptr;
+		UMotionControllerComponent* VisualizationParent = Visualization ? Cast<UMotionControllerComponent>(Visualization->GetAttachParent()) : nullptr;
 		if (!VisualizationParent)
 		{
 			continue;
