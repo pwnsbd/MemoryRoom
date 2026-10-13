@@ -136,6 +136,51 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 		return;
 	}
 
+	// The pawn's controllers may track the aim pose only (the right one does in BP_VRPawn - the
+	// laser and selection read it, so it must stay as it is). A hand needs a grip pose, so when
+	// a side has none, add a dedicated grip controller next to the existing one. It carries no
+	// selection or aim logic: the pointer code resolves controllers by name or by the exact
+	// "Left" grip source, and the calibration overlay only draws debug arrows.
+	auto EnsureGripController = [this, Owner, &Controllers](const FName GripSource, const FName GripAlias, const TCHAR* SidePrefix, const TCHAR* NewName)
+	{
+		UMotionControllerComponent* SideController = nullptr;
+		for (UMotionControllerComponent* Controller : Controllers)
+		{
+			if (!Controller)
+			{
+				continue;
+			}
+			const FName Source = Controller->GetTrackingMotionSource();
+			if (Source == GripSource || Source == GripAlias)
+			{
+				return;
+			}
+			if (!SideController && Source.ToString().StartsWith(SidePrefix))
+			{
+				SideController = Controller;
+			}
+		}
+
+		// Share the parent of that side's existing controller so the tracking space matches.
+		UMotionControllerComponent* ParentSource = SideController ? SideController : Controllers[0];
+		USceneComponent* Parent = ParentSource ? ParentSource->GetAttachParent() : nullptr;
+
+		const FName ControllerName = MakeUniqueObjectName(Owner, UMotionControllerComponent::StaticClass(), NewName);
+		UMotionControllerComponent* GripController = NewObject<UMotionControllerComponent>(Owner, ControllerName);
+		if (!GripController)
+		{
+			return;
+		}
+		GripController->SetTrackingMotionSource(GripSource);
+		GripController->SetupAttachment(Parent ? Parent : Owner->GetRootComponent());
+		GripController->RegisterComponent();
+		Controllers.Add(GripController);
+
+		UE_LOG(LogMemoryRoom, Log, TEXT("%s created grip controller %s (motion source %s)."), *GetNameSafe(this), *GripController->GetName(), *GripSource.ToString());
+	};
+	EnsureGripController(IMotionController::LeftHandSourceId, FName(TEXT("LeftGrip")), TEXT("Left"), TEXT("LeftGripController"));
+	EnsureGripController(IMotionController::RightHandSourceId, FName(TEXT("RightGrip")), TEXT("Right"), TEXT("RightGripController"));
+
 	USkeletalMesh* RightMesh = bUseHandMeshes ? LoadObject<USkeletalMesh>(nullptr, *HandMeshPath) : nullptr;
 	USkeletalMesh* LeftMesh = bUseHandMeshes ? LoadObject<USkeletalMesh>(nullptr, *LeftHandMeshPath) : nullptr;
 	UAnimSequence* RightGraspAnim = RightMesh ? LoadObject<UAnimSequence>(nullptr, *HandGraspAnimPath) : nullptr;
@@ -261,10 +306,8 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 			Visualization->RegisterComponent();
 		}
 
-		// The left hand has no proper custom mesh yet - bUseHandMeshOnLeft is off pending real
-		// calibration (see memoryroom-left-hand-unresolved in project memory) - so it falls back
-		// to the bare stock controller model here, same as the right hand does when hand meshes
-		// are off entirely. This used to be force-hidden, back when the left controller was
+		// A hand falls back to the bare stock controller model here when its mesh is missing or
+		// hand meshes are off (bUseHandMeshes / bUseHandMeshOnLeft). This used to be force-hidden, back when the left controller was
 		// purely decorative (wrist/menu only); now that it is a real second pointer/grab hand
 		// (see TickHandInteraction), it needs to be visible like any other controller so there
 		// is something to see aiming with. Re-asserted every call, not just on first creation -
