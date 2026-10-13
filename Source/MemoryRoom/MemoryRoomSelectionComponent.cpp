@@ -172,6 +172,7 @@ void UMemoryRoomSelectionComponent::EnsureHandVisuals()
 		const bool bIsRight = Source == IMotionController::RightHandSourceId || Source == FName(TEXT("RightGrip"));
 		if (!bIsLeft && !bIsRight)
 		{
+			UE_LOG(LogMemoryRoom, Log, TEXT("%s skipped hand for %s (motion source %s is not a grip pose)."), *GetNameSafe(this), *Controller->GetName(), *Source.ToString());
 			continue;
 		}
 

@@ -112,9 +112,12 @@ void AMemoryRoomDustActor::BuildMotes()
 	// (instances SafeCount..2*SafeCount-1, driven in lockstep from Tick) to show from both sides.
 	if (bLeaf)
 	{
+		// Copy out first: TArray::Add asserts when handed a reference to one of its own elements.
+		InstanceTransforms.Reserve(SafeCount * 2);
 		for (int32 Index = 0; Index < SafeCount; ++Index)
 		{
-			InstanceTransforms.Add(InstanceTransforms[Index]);
+			const FTransform Partner = InstanceTransforms[Index];
+			InstanceTransforms.Add(Partner);
 		}
 	}
 
