@@ -16,7 +16,7 @@ class UCameraComponent;
 class UMaterialInterface;
 class UStaticMesh;
 class UStaticMeshComponent;
-class UTextRenderComponent;
+class UMemoryRoomHandVisualsComponent;
 class USceneComponent;
 class USplineComponent;
 class USplineMeshComponent;
@@ -269,75 +269,6 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Debug")
 	bool bDebugSelectionLog;
 
-	// Draws each motion controller's own axes at the controller, with a label naming its
-	// motion source. Answers "which way is this controller actually pointing" directly,
-	// instead of guessing offsets and rotations from the outside. Off now that the numbers it
-	// gave (see quest-grip-pose-axes in project memory) are baked into the hand rotations and
-	// the wrist-reveal gate; flip back on if either ever needs re-measuring.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Calibration")
-	bool bShowControllerCalibration = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Calibration", meta = (ClampMin = "1.0"))
-	float CalibrationAxisLength = 12.0f;
-
-	// A UMotionControllerComponent draws nothing on its own - the model comes from a child
-	// UXRDeviceVisualizationComponent, and BP_VRPawn only ever had one, on the right hand.
-	// With this on, any hand controller missing one gets a visualization built to match the
-	// one that already exists, so both hands show the same model in the same style.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	bool bEnsureHandVisuals = true;
-
-	// Draw the XR template's mannequin hand in place of the controller model. Off falls back
-	// to the plain controller models on both hands.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	bool bUseHandMeshes = true;
-
-	// The Meta OpenXR hands (copied from the Interaction SDK into Content/MetaHands) each have
-	// their own mesh, so both hands are on. Turning this off drops the left controller back to
-	// the plain stock model, same as bUseHandMeshes being off would give it.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	bool bUseHandMeshOnLeft = true;
-
-	// Left and right have separate meshes and clips, so nothing is mirrored. Pointing these back
-	// at /Game/XRMannequins/Meshes/SKM_MannyXR_right (right only) restores the old mannequin.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FString RightHandMeshPath = TEXT("/Game/MetaHands/Models/Hands/SK_OpenXRHand_Right.SK_OpenXRHand_Right");
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FString LeftHandMeshPath = TEXT("/Game/MetaHands/Models/Hands/SK_OpenXRHand_Left.SK_OpenXRHand_Left");
-
-	// The open-to-fist clip the curl scrubs through, one per hand like the meshes.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FString RightHandGraspAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Right_MetaQuestPro_GripTrigger_Down.Anim_OpenXRHand_Right_MetaQuestPro_GripTrigger_Down");
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FString LeftHandGraspAnimPath = TEXT("/Game/MetaHands/Models/Hands/Animations/Anim_OpenXRHand_Left_MetaQuestPro_GripTrigger_Down.Anim_OpenXRHand_Left_MetaQuestPro_GripTrigger_Down");
-
-	// Meta's static controller model, attached to each grip controller at identity so the hand
-	// holds it. The stock device-visualization models are hidden on any side that has a hand.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	bool bShowControllerModels = true;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FString LeftControllerMeshPath = TEXT("/Game/MetaHands/Models/Controllers/MetaQuestPro/SM_MetaQuestPro_Left.SM_MetaQuestPro_Left");
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FString RightControllerMeshPath = TEXT("/Game/MetaHands/Models/Controllers/MetaQuestPro/SM_MetaQuestPro_Right.SM_MetaQuestPro_Right");
-
-	// Where the wrist sits relative to the controller mesh (the hand is a child of it), taken from
-	// the Interaction SDK (IsdkControllerVisualsRigComponent / IsdkXRUtils.h). Renamed from the old
-	// "...RelativeLocation/Rotation" so values stored in BP_VRPawn do not override these.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FVector RightHandOffsetFromControllerLocation = FVector(-10.5f, 3.0f, -4.2f);
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FVector LeftHandOffsetFromControllerLocation = FVector(-10.5f, -3.0f, -4.2f);
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FRotator RightHandOffsetFromControllerRotation = FRotator(-90.0f, -165.0f, 0.0f);
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FRotator LeftHandOffsetFromControllerRotation = FRotator(90.0f, -15.0f, 0.0f);
 	// How far the trigger alone curls the hand. The grip always curls it the whole way.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers", meta = (ClampMin = "0.0", ClampMax = "1.0"))
 	float TriggerCurlAmount = 0.55f;
@@ -359,10 +290,7 @@ private:
 	UCameraComponent* ResolveCameraComponent();
 	AMemoryRoomManager* ResolveMemoryRoomManager();
 	void EnsurePointerComponents();
-	void EnsureHandVisuals();
 	void UpdateHandCurl(float DeltaTime);
-	void UpdateControllerCalibration(float DeltaTime);
-	AMemoryRoomMenuActor* ResolveMenuActorForCalibration() const;
 	void UpdatePointerVisual(USplineComponent* Spline, USplineMeshComponent* Beam, UStaticMeshComponent* HitIndicator, const FVector& Start, const FVector& End, bool bValidTarget, bool bShowHitIndicator, bool bUseBeamVisual, bool bUseHmdTargetX, float IndicatorRadiusScale = 1.0f);
 	void UpdateHmdTargetXVisual(const FVector& Start, const FVector& End, bool bVisible);
 	void HideHmdTargetXVisual();
@@ -447,14 +375,9 @@ private:
 	// photo into a camera-follower.
 	FTransform CachedExpandedBaseTransform = FTransform::Identity;
 
+	// Built in BeginPlay; draws the controllers and hands. This component only feeds it curl.
 	UPROPERTY(Transient)
-	TArray<TObjectPtr<UTextRenderComponent>> CalibrationLabels;
-
-	UPROPERTY(Transient)
-	TObjectPtr<USkeletalMeshComponent> LeftHandMeshComponent;
-
-	UPROPERTY(Transient)
-	TObjectPtr<USkeletalMeshComponent> RightHandMeshComponent;
+	TObjectPtr<UMemoryRoomHandVisualsComponent> HandVisuals;
 
 	// Where the fingers are being asked to go, and where they actually are this frame.
 	float TargetHandCurl = 0.0f;
