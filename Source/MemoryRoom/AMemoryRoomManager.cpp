@@ -741,6 +741,7 @@ void AMemoryRoomManager::SnapPlayerPawnToFloor()
 void AMemoryRoomManager::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	TickTurn(DeltaTime);
 	TickLocomotion(DeltaTime);
 	RefreshCachedHelixCenterLocation();
 
@@ -750,7 +751,12 @@ void AMemoryRoomManager::Tick(float DeltaTime)
 		ScrollVelocity = 0.0f;
 	}
 
-	const float CombinedScrollInput = ScrollInputAmount + HeldScrollInputAmount;
+	// Turning takes priority over scrolling: a diagonal or imperfect sideways push on the same
+	// stick would otherwise rotate the room and move the gallery at once, which is a reliable
+	// way to make someone motion-sick in VR. Any real turn deflection zeroes scroll for the
+	// frame rather than blending the two.
+	const bool bTurningNow = FMath::Abs(TurnInputX) > 0.15f;
+	const float CombinedScrollInput = bTurningNow ? 0.0f : (ScrollInputAmount + HeldScrollInputAmount);
 	const bool bHasScrollInput = !FMath::IsNearlyZero(CombinedScrollInput);
 	if (bHasScrollInput)
 	{
@@ -2930,6 +2936,60 @@ void AMemoryRoomManager::StopLocomotionMoveInput()
 	LocoInputY = 0.0f;
 }
 
+void AMemoryRoomManager::SetTurnInput(float Value)
+{
+	TurnInputX = Value;
+}
+
+void AMemoryRoomManager::StopTurnInput()
+{
+	TurnInputX = 0.0f;
+}
+
+void AMemoryRoomManager::TickTurn(float DeltaSeconds)
+{
+	UWorld* World = GetWorld();
+	APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	APawn* Pawn = PC ? PC->GetPawn() : nullptr;
+
+	// Throttled diagnostic: shows whether SetTurnInput is even reaching this class, same as
+	// the "Loco diag" line above - fires regardless of pawn/deadzone so a silent Blueprint or
+	// Input Mapping wiring gap (raw TurnInputX stuck at 0) is visible without a debugger.
+	static float TurnDiagAcc = 0.0f;
+	TurnDiagAcc += DeltaSeconds;
+	if (TurnDiagAcc > 1.0f)
+	{
+		TurnDiagAcc = 0.0f;
+		UE_LOG(LogMemoryRoom, Warning, TEXT("Turn diag: pawn=%s turnInput=%.3f speed=%.1f"),
+			*GetNameSafe(Pawn), TurnInputX, TurnSpeedDegPerSec);
+	}
+
+	if (!Pawn || DeltaSeconds <= 0.0f)
+	{
+		return;
+	}
+
+	const float Stick = FMath::Abs(TurnInputX) > 0.15f ? TurnInputX : 0.0f;
+	if (FMath::IsNearlyZero(Stick))
+	{
+		return;
+	}
+
+	const float YawDelta = Stick * TurnSpeedDegPerSec * DeltaSeconds;
+
+	FVector HeadLocation = FVector::ZeroVector;
+	FRotator HeadRotation = FRotator::ZeroRotator;
+	PC->GetPlayerViewPoint(HeadLocation, HeadRotation);
+
+	// Rotate the pawn about the player's actual head position, not the pawn's own capsule
+	// origin - roomscale tracking means the head can be anywhere inside the play space, so
+	// pivoting on the capsule would swing the room around you instead of spinning it in place.
+	const FVector HeadToPawn = Pawn->GetActorLocation() - HeadLocation;
+	const FVector RotatedOffset = HeadToPawn.RotateAngleAxis(YawDelta, FVector::UpVector);
+	Pawn->SetActorLocation(HeadLocation + RotatedOffset, /*bSweep*/ false);
+	Pawn->AddActorWorldRotation(FRotator(0.0f, YawDelta, 0.0f));
+}
+
 void AMemoryRoomManager::TickLocomotion(float DeltaSeconds)
 {
 	UWorld* World = GetWorld();
@@ -2991,6 +3051,25 @@ void AMemoryRoomManager::TickLocomotion(float DeltaSeconds)
 		Target.Z = FMath::FInterpTo(Current.Z, FloorZ, DeltaSeconds, 3.0f);
 	}
 	Target.Z = FMath::Clamp(Target.Z, FloorZ, CeilingZ);
+
+	// Horizontal containment: never let the player drift past the photo ring - it tapers with
+	// height exactly like EvaluateGallerySpiralPosition, so the boundary tapers along with it.
+	{
+		const FVector CenterLocation = GetHelixCenterLocation();
+		const float HeightAboveBase = FMath::Max(Target.Z - CenterLocation.Z - PhotoHeight, 0.0f);
+		const float RingTaperAlpha = FMath::Clamp(HeightAboveBase / FMath::Max(GallerySpiralTaperHeight, 1.0f), 0.0f, 1.0f);
+		const float RingRadius = FMath::Lerp(GallerySpiralBaseRadius, GallerySpiralTopRadius, RingTaperAlpha);
+		const float MaxRadius = FMath::Max(RingRadius - SpiralBoundaryMarginCm, 10.0f);
+
+		FVector2D Offset2D(Target.X - CenterLocation.X, Target.Y - CenterLocation.Y);
+		const float DistFromCenter = Offset2D.Size();
+		if (DistFromCenter > MaxRadius && DistFromCenter > KINDA_SMALL_NUMBER)
+		{
+			const FVector2D Clamped = Offset2D * (MaxRadius / DistFromCenter);
+			Target.X = CenterLocation.X + Clamped.X;
+			Target.Y = CenterLocation.Y + Clamped.Y;
+		}
+	}
 
 	// Keep-out ONLY while actively driving into a photo - never shove the player away from a
 	// photo they are holding (a grabbed photo pulled in close would otherwise push them off).

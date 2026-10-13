@@ -92,6 +92,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
 	void StopLocomotionMoveInput();
 
+	// Right-stick smooth turn (X axis only) - forwards to AMemoryRoomManager. Wire
+	// IA_MemoryRoomTurn (Axis1D) Triggered -> SetTurnInput, Completed -> StopTurnInput.
+	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
+	void SetTurnInput(float Value);
+
+	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
+	void StopTurnInput();
+
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
 	void ToggleFloat();
 

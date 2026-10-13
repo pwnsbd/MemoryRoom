@@ -108,6 +108,16 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
 	void StopLocomotionMoveInput();
 
+	// Right-stick smooth turn (X axis only - Y is still gallery scroll). Rotates the pawn
+	// about the player's actual head position each tick, not the pawn's own origin, so the
+	// room spins around you instead of swinging you around the capsule. Feed the Axis1D
+	// action value on Triggered, and call the Stop variant on Completed/Canceled.
+	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
+	void SetTurnInput(float Value);
+
+	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
+	void StopTurnInput();
+
 	// Flip walk <-> float. Bind to a digital action (left X click) on Triggered.
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
 	void ToggleFloat();
@@ -455,6 +465,17 @@ public:
 	// How far up you can float, measured in full turns of the photo spiral (~5.1 m each).
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Locomotion", meta = (ClampMin = "0.0"))
 	float MaxFloatTurns = 3.0f;
+
+	// Horizontal containment: the player can never get farther from the helix centre than the
+	// photo ring itself, minus this margin. The ring tapers with height (GallerySpiralBaseRadius
+	// -> GallerySpiralTopRadius over GallerySpiralTaperHeight, same curve as
+	// EvaluateGallerySpiralPosition), so this boundary tapers with you as you float up.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Locomotion", meta = (ClampMin = "0.0"))
+	float SpiralBoundaryMarginCm = 60.0f;
+
+	// Smooth-turn speed at full stick deflection.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Locomotion", meta = (ClampMin = "0.0"))
+	float TurnSpeedDegPerSec = 90.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room", meta = (DisplayName = "Enable Helix Layout"))
 	bool bEnableHelixLayout;
@@ -810,6 +831,7 @@ private:
 	void AddMoveXInput(float Value);
 	void AddMoveYInput(float Value);
 	void TickLocomotion(float DeltaSeconds);
+	void TickTurn(float DeltaSeconds);
 	void ProcessGalleryLoadBatch();
 	void FinishGalleryLoad();
 	bool StartAndroidMediaStoreDiagnosticLoad();
@@ -880,6 +902,8 @@ private:
 	// state does not work for OpenXR controllers - only bound axis/action delegates fire).
 	float LocoInputX = 0.0f;
 	float LocoInputY = 0.0f;
+	// Right-stick X only - Y stays on gallery scroll.
+	float TurnInputX = 0.0f;
 	// Floor height captured once by SnapPlayerPawnToFloor - the bottom of the float range.
 	float LocomotionFloorZ = 0.0f;
 	bool bLocomotionFloorCaptured = false;

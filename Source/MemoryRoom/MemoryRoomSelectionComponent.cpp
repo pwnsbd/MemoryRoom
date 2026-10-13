@@ -1026,6 +1026,22 @@ void UMemoryRoomSelectionComponent::StopLocomotionMoveInput()
 	}
 }
 
+void UMemoryRoomSelectionComponent::SetTurnInput(float Value)
+{
+	if (AMemoryRoomManager* Manager = ResolveMemoryRoomManager())
+	{
+		Manager->SetTurnInput(Value);
+	}
+}
+
+void UMemoryRoomSelectionComponent::StopTurnInput()
+{
+	if (AMemoryRoomManager* Manager = ResolveMemoryRoomManager())
+	{
+		Manager->StopTurnInput();
+	}
+}
+
 void UMemoryRoomSelectionComponent::ToggleFloat()
 {
 	if (AMemoryRoomManager* Manager = ResolveMemoryRoomManager())

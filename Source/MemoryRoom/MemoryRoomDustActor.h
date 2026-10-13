@@ -11,11 +11,21 @@ class UInstancedStaticMeshComponent;
 class UMaterialInterface;
 class UMaterialInstanceDynamic;
 class USceneComponent;
+class UStaticMesh;
+
+// Dust = the original slow-drifting firefly motes. Leaf = flat tumbling cards blown sideways
+// by a wind vector - same field/wrap mechanics, different mesh and motion in Tick.
+UENUM(BlueprintType)
+enum class EMemoryRoomMoteStyle : uint8
+{
+	Dust,
+	Leaf
+};
 
 /**
- * Slow-drifting motes filling the space around the player. They carry no light of their
- * own - they are lit by whatever the photos are casting, so at night they pick up the
- * colours of nearby memories and read as fireflies around them.
+ * A field of small instanced props filling the space around the player - either slow-drifting
+ * dust motes or wind-blown leaves (MoteStyle). Motes carry no light of their own - they are lit
+ * by whatever the photos are casting, so at night they pick up the colours of nearby memories.
  *
  * One instanced mesh component, so the whole field is a single draw call. Motes are kept
  * inside a box centred on the player and wrap around when they leave it, which means the
@@ -45,6 +55,10 @@ public:
 
 protected:
 	virtual void BeginPlay() override;
+
+	// Dust (fireflies) or Leaf (wind-blown cards). Changing this at runtime rebuilds the field.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Dust")
+	EMemoryRoomMoteStyle MoteStyle = EMemoryRoomMoteStyle::Dust;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Dust", meta = (ClampMin = "0", ClampMax = "2000"))
 	int32 MoteCount = 260;
@@ -93,6 +107,30 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Dust")
 	TObjectPtr<UMaterialInterface> MoteMaterial;
 
+	// --- Leaf style only. Ignored in Dust style. ---
+
+	// Horizontal push direction (need not be normalised). Leaves drift this way continuously
+	// on top of their own sway, the way a steady breeze carries falling leaves sideways.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Dust|Leaves")
+	FVector2D WindDirection = FVector2D(1.0f, 0.3f);
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Dust|Leaves", meta = (ClampMin = "0.0", UIMax = "60.0"))
+	float WindStrengthCmPerSecond = 22.0f;
+
+	// Side-to-side sway perpendicular to the wind, the flutter real leaves have instead of
+	// travelling in a straight line.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Dust|Leaves", meta = (ClampMin = "0.0", UIMax = "80.0"))
+	float SwayAmountCm = 26.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Dust|Leaves", meta = (ClampMin = "0.0", UIMax = "400.0"))
+	float TumbleSpeedDegPerSecMin = 40.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Dust|Leaves", meta = (ClampMin = "0.0", UIMax = "400.0"))
+	float TumbleSpeedDegPerSecMax = 160.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Dust|Leaves", meta = (ClampMin = "0.5", UIMax = "20.0"))
+	float LeafSizeCm = 4.0f;
+
 	// Vector parameters SetDustTint tries, in order, on the mote material. The first the
 	// material actually declares wins; unknown names are ignored.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Dust")
@@ -110,6 +148,14 @@ private:
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Memory Room|Dust", meta = (AllowPrivateAccess = "true"))
 	TObjectPtr<UInstancedStaticMeshComponent> MoteMeshes;
 
+	// Engine primitives cached in the constructor so BuildMotes can swap mesh by MoteStyle
+	// without a ConstructorHelpers lookup outside of constructor context.
+	UPROPERTY(Transient)
+	TObjectPtr<UStaticMesh> DustSphereMesh;
+
+	UPROPERTY(Transient)
+	TObjectPtr<UStaticMesh> LeafPlaneMesh;
+
 	struct FMote
 	{
 		FVector BasePosition = FVector::ZeroVector;
@@ -121,6 +167,8 @@ private:
 		// twinkle does not pulse in lockstep with the drift bob.
 		float TwinklePhase = 0.0f;
 		float TwinkleRate = 1.0f;
+		// Leaf style: spin rate (deg/sec) and axis (reuses DriftAxis) for the tumble.
+		float TumbleRateDegPerSec = 90.0f;
 	};
 
 	TArray<FMote> Motes;
