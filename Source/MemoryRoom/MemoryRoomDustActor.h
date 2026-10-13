@@ -53,6 +53,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Dust")
 	void SetDustTint(FLinearColor NewTint);
 
+	// Switches between Dust and Leaf. Rebuilds the field only when the style actually changes.
+	UFUNCTION(BlueprintCallable, Category = "Memory Room|Dust")
+	void SetMoteStyle(EMemoryRoomMoteStyle NewStyle);
+
+#if WITH_EDITOR
+	virtual void PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent) override;
+#endif
+
 protected:
 	virtual void BeginPlay() override;
 
@@ -140,6 +148,7 @@ private:
 	void BuildMotes();
 	void EnsureMoteMaterial();
 	void ApplyDustTintToMaterial();
+	FLinearColor GetEffectiveTint() const;
 	AMemoryRoomSkyDomeActor* ResolveSkyDome();
 
 	UPROPERTY(VisibleAnywhere, BlueprintReadOnly, Category = "Memory Room|Dust", meta = (AllowPrivateAccess = "true"))

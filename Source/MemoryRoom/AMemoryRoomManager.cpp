@@ -1626,6 +1626,7 @@ void AMemoryRoomManager::ApplyTheme()
 
 	if (AMemoryRoomDustActor* Dust = FindDustActor())
 	{
+		Dust->SetMoteStyle(Theme->MoteStyle);
 		Dust->SetDustTint(Theme->DustTint);
 	}
 

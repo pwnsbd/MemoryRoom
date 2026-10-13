@@ -59,6 +59,10 @@ void AMemoryRoomDustActor::BuildMotes()
 
 	MoteMeshes->ClearInstances();
 	Motes.Reset();
+	ActiveMoteCount = 0;
+	// Drop the old material wrapper so it re-wraps the new style's mesh material.
+	MoteMeshes->SetMaterial(0, nullptr);
+	MoteMaterialInstance = nullptr;
 
 	const int32 SafeCount = FMath::Clamp(MoteCount, 0, 2000);
 	if (SafeCount <= 0)
@@ -104,6 +108,16 @@ void AMemoryRoomDustActor::BuildMotes()
 		InstanceTransforms.Emplace(FQuat::Identity, Mote.BasePosition, FVector(MoteRadiusCm / 100.0f));
 	}
 
+	// The engine plane is single-sided, so each leaf gets a second plane flipped over it
+	// (instances SafeCount..2*SafeCount-1, driven in lockstep from Tick) to show from both sides.
+	if (bLeaf)
+	{
+		for (int32 Index = 0; Index < SafeCount; ++Index)
+		{
+			InstanceTransforms.Add(InstanceTransforms[Index]);
+		}
+	}
+
 	MoteMeshes->AddInstances(InstanceTransforms, false, false);
 	ActiveMoteCount = SafeCount;
 
@@ -141,10 +155,46 @@ void AMemoryRoomDustActor::ApplyDustTintToMaterial()
 	{
 		if (!ParameterName.IsNone())
 		{
-			MoteMaterialInstance->SetVectorParameterValue(ParameterName, DustTint);
+			MoteMaterialInstance->SetVectorParameterValue(ParameterName, GetEffectiveTint());
 		}
 	}
 }
+
+FLinearColor AMemoryRoomDustActor::GetEffectiveTint() const
+{
+	// Leaves fall back to an autumn orange when the theme leaves the tint at neutral white.
+	if (MoteStyle == EMemoryRoomMoteStyle::Leaf && DustTint.Equals(FLinearColor::White, 0.02f))
+	{
+		return FLinearColor(0.85f, 0.38f, 0.08f, 1.0f);
+	}
+	return DustTint;
+}
+
+void AMemoryRoomDustActor::SetMoteStyle(EMemoryRoomMoteStyle NewStyle)
+{
+	if (MoteStyle == NewStyle)
+	{
+		return;
+	}
+	MoteStyle = NewStyle;
+	// Before BeginPlay the field does not exist yet; BeginPlay builds it in the new style.
+	if (HasActorBegunPlay())
+	{
+		BuildMotes();
+		SetDensityLevel(DensityLevel);
+	}
+}
+
+#if WITH_EDITOR
+void AMemoryRoomDustActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(AMemoryRoomDustActor, MoteStyle) && HasActorBegunPlay())
+	{
+		BuildMotes();
+	}
+}
+#endif
 
 void AMemoryRoomDustActor::SetDustTint(FLinearColor NewTint)
 {
@@ -293,6 +343,12 @@ void AMemoryRoomDustActor::Tick(float DeltaSeconds)
 		const FVector InstanceScale = bActive ? FVector(MoteRadiusCm / 100.0f) : FVector::ZeroVector;
 
 		MoteMeshes->UpdateInstanceTransform(Index, FTransform(InstanceRotation, FieldCenter + Position, InstanceScale), true, false, true);
+		if (bLeaf)
+		{
+			// Back-to-back partner plane: same spot, flipped 180 degrees about its local X axis.
+			const FQuat FlippedRotation = InstanceRotation * FQuat(FVector::XAxisVector, PI);
+			MoteMeshes->UpdateInstanceTransform(Index + Motes.Num(), FTransform(FlippedRotation, FieldCenter + Position, InstanceScale), true, false, true);
+		}
 	}
 
 	MoteMeshes->MarkRenderStateDirty();
