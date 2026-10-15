@@ -84,7 +84,7 @@ void AMemoryRoomMenuActor::BuildBoard()
 	}
 
 	const int32 SettingCount = static_cast<int32>(EMemoryRoomUserSetting::Count);
-	const EMemoryRoomMenuAction Actions[] = { EMemoryRoomMenuAction::ResetView, EMemoryRoomMenuAction::JumpToNewest, EMemoryRoomMenuAction::ReloadPhotos, EMemoryRoomMenuAction::Close };
+	const EMemoryRoomMenuAction Actions[] = { EMemoryRoomMenuAction::ResetView, EMemoryRoomMenuAction::JumpToNewest, EMemoryRoomMenuAction::ReloadPhotos, EMemoryRoomMenuAction::ChoosePhotoSource, EMemoryRoomMenuAction::Close };
 	const int32 ActionCount = UE_ARRAY_COUNT(Actions);
 
 	const int32 SettingRows = FMath::DivideAndRoundUp(SettingCount, SettingColumns);
@@ -263,6 +263,19 @@ void AMemoryRoomMenuActor::BeginPlay()
 		MemoryRoomManager->OnUserSettingsChanged.AddDynamic(this, &AMemoryRoomMenuActor::HandleSettingsChanged);
 		MemoryRoomManager->OnPhotoLibraryReloadStarted.AddDynamic(this, &AMemoryRoomMenuActor::HandleReloadStarted);
 		MemoryRoomManager->OnPhotoLibraryReloadCompleted.AddDynamic(this, &AMemoryRoomMenuActor::HandleReloadCompleted);
+	}
+	// Manager actors may spawn this board before restoring SaveGame settings. Check on the
+	// next tick so a returning user with a saved source does not see onboarding again.
+	if (GetWorld())
+	{
+		GetWorld()->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
+		{
+			if (MemoryRoomManager && !MemoryRoomManager->HasPhotoSourceChoice())
+			{
+				StatusMessage = TEXT("Choose a photo folder below to begin.");
+				OpenMenu();
+			}
+		}));
 	}
 
 	if (!bStyled)
@@ -761,6 +774,16 @@ void AMemoryRoomMenuActor::PressRow(FMemoryRoomMenuRow& Row, bool bIsPlus)
 		StatusMessage = TEXT("Refreshing photos...");
 		if (MemoryRoomManager) MemoryRoomManager->ReloadPhotoLibrary();
 		break;
+	case EMemoryRoomMenuAction::ChoosePhotoSource:
+		if (MemoryRoomManager && MemoryRoomManager->CommitPhotoAlbumPreview())
+		{
+			StatusMessage = TEXT("Photo folder saved. Loading photos...");
+		}
+		else
+		{
+			StatusMessage = TEXT("Choose a folder with the Photos arrows first.");
+		}
+		break;
 	case EMemoryRoomMenuAction::Close:
 		CloseMenu();
 		break;
@@ -794,6 +817,7 @@ void AMemoryRoomMenuActor::RefreshText()
 			case EMemoryRoomMenuAction::ResetView: Text = TEXT("RESET VIEW"); break;
 			case EMemoryRoomMenuAction::JumpToNewest: Text = TEXT("JUMP TO NEWEST"); break;
 			case EMemoryRoomMenuAction::ReloadPhotos: Text = TEXT("RELOAD PHOTOS"); break;
+			case EMemoryRoomMenuAction::ChoosePhotoSource: Text = TEXT("USE PHOTO FOLDER"); break;
 			case EMemoryRoomMenuAction::Close: Text = TEXT("CLOSE"); break;
 			}
 			Row.Label->SetText(FText::FromString(Text));
@@ -896,7 +920,11 @@ void AMemoryRoomMenuActor::ApplyHoverVisuals()
 	}
 }
 
-void AMemoryRoomMenuActor::HandleSettingsChanged() { RefreshText(); }
+void AMemoryRoomMenuActor::HandleSettingsChanged()
+{
+	if (MemoryRoomManager && MemoryRoomManager->HasPhotoSourceChoice()) StatusMessage.Reset();
+	RefreshText();
+}
 void AMemoryRoomMenuActor::HandleReloadStarted() { StatusMessage = TEXT("Refreshing photos..."); RefreshText(); }
 void AMemoryRoomMenuActor::HandleReloadCompleted(int32 PhotoCount, bool bSuccess)
 {

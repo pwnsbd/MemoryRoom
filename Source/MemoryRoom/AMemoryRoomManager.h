@@ -64,7 +64,7 @@ enum class EMemoryRoomUserSetting : uint8
 	Count UMETA(Hidden)
 };
 
-// One entry in the Photos row's album list. Id is empty for "All photos".
+// One entry in the Photos row's album list. "@all" identifies All photos.
 struct FMemoryRoomAlbum
 {
 	FString Id;
@@ -257,6 +257,14 @@ public:
 	// Steps a setting up (+1) or down (-1); clamps, applies live, and saves.
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Settings")
 	void AdjustUserSetting(EMemoryRoomUserSetting Setting, int32 Direction);
+
+	// Source selection state for the in-headset onboarding menu.
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Memory Room|Settings")
+	bool HasPhotoSourceChoice() const { return bHasPhotoSourceChoice; }
+
+	// Commits the album currently previewed by the Photos row. Browsing never loads or saves.
+	UFUNCTION(BlueprintCallable, Category = "Memory Room|Settings")
+	bool CommitPhotoAlbumPreview();
 
 	// Loads saved settings and pushes them into the world. Called at BeginPlay.
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Settings")
@@ -879,6 +887,9 @@ private:
 
 	TArray<FMemoryRoomAlbum> Albums;
 	FString SelectedAlbumId;
+	bool bHasPhotoSourceChoice = false;
+	int32 PreviewAlbumIndex = 0;
+	bool bPhotoAlbumPreviewActive = false;
 	int32 AlbumEnumerationGeneration = 0;
 	double LastAlbumRefreshSeconds = -1000.0;
 	FTimerHandle AlbumReloadTimerHandle;

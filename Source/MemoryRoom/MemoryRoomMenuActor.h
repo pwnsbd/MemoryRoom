@@ -20,6 +20,7 @@ enum class EMemoryRoomMenuAction : uint8
 	ResetView,
 	JumpToNewest,
 	ReloadPhotos,
+	ChoosePhotoSource,
 	Close
 };
 
