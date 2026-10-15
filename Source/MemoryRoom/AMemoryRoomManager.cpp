@@ -630,7 +630,12 @@ void AMemoryRoomManager::BeginPlay()
 
 	// Restore the player's saved settings-panel choices and push them into the world.
 	ApplyUserSettings();
+	#if PLATFORM_ANDROID
+	// Let the first-run folder browser appear before Android asks for photo access.
+	if (bHasPhotoSourceChoice) RefreshAlbumList();
+	#else
 	RefreshAlbumList();
+	#endif
 
 	// Independent of the gallery scan below - a placed photo is addressed by its own saved
 	// absolute path, not a logical index into the discovered library.
@@ -1956,6 +1961,20 @@ bool AMemoryRoomManager::CommitPhotoAlbumPreview()
 	return true;
 }
 
+bool AMemoryRoomManager::SelectPhotoAlbumById(const FString& Id)
+{
+	const FMemoryRoomAlbum* Album = Albums.FindByPredicate([&Id](const FMemoryRoomAlbum& Candidate) { return Candidate.Id == Id; });
+	if (!Album) return false;
+	SelectedAlbumId = Album->Id;
+	bHasPhotoSourceChoice = true;
+	bPhotoAlbumPreviewActive = false;
+	PreviewAlbumIndex = Albums.IndexOfByPredicate([&Id](const FMemoryRoomAlbum& Candidate) { return Candidate.Id == Id; });
+	SaveUserSettings();
+	OnUserSettingsChanged.Broadcast();
+	ScheduleAlbumReload();
+	return true;
+}
+
 void AMemoryRoomManager::ClearAndroidThumbnailCacheAndActiveTextures()
 {
 	++ThumbnailQualityGeneration;
@@ -2085,8 +2104,12 @@ void AMemoryRoomManager::ScanPhotoFolder()
 	UE_LOG(LogMemoryRoom, Log, TEXT("%s scanning photo folder: %s"), *GetName(), *FolderToScan);
 
 	TArray<FString> AllFiles;
+	#if PLATFORM_ANDROID
 	const FString SearchPattern = FPaths::Combine(FolderToScan, TEXT("*.*"));
 	IFileManager::Get().FindFiles(AllFiles, *SearchPattern, true, false);
+	#else
+	IFileManager::Get().FindFilesRecursive(AllFiles, *FolderToScan, TEXT("*.*"), true, false, false);
+	#endif
 
 	for (const FString& FileName : AllFiles)
 	{
@@ -2098,7 +2121,11 @@ void AMemoryRoomManager::ScanPhotoFolder()
 			continue;
 		}
 
+		#if PLATFORM_ANDROID
 		DiscoveredPhotoFiles.Add(FPaths::ConvertRelativePathToFull(FPaths::Combine(FolderToScan, FileName)));
+		#else
+		DiscoveredPhotoFiles.Add(FPaths::ConvertRelativePathToFull(FileName));
+		#endif
 	}
 
 	DiscoveredPhotoFiles.Sort([](const FString& Left, const FString& Right)
@@ -2145,8 +2172,9 @@ void AMemoryRoomManager::RefreshAlbumList()
 
 	FString Root = PhotoFolderPath;
 #if PLATFORM_ANDROID
-	// The headset folder is an album only while it is the active photo source.
-	Root = bAndroidUsePhotoFolder ? ResolveAndroidPhotoFolderPath() : FString();
+	// Public browsing uses MediaStore paths; the app-private developer folder stays available
+	// only to older saves that explicitly selected it.
+	Root.Reset();
 #endif
 	Root.TrimStartAndEndInline();
 
@@ -2167,36 +2195,31 @@ void AMemoryRoomManager::RefreshAlbumList()
 		}
 		if (!Folder.IsEmpty() && FileManager.DirectoryExists(*Folder))
 		{
-			TArray<FString> SubFolders;
-			FileManager.FindFiles(SubFolders, *FPaths::Combine(Folder, TEXT("*")), false, true);
-			SubFolders.Sort([](const FString& L, const FString& R) { return L.Compare(R, ESearchCase::IgnoreCase) < 0; });
-			for (const FString& Sub : SubFolders)
+			TFunction<int32(const FString&)> AddFolderTree = [&AddFolderTree, &Found, &FileManager](const FString& ParentPath)
 			{
-				FString Path = FPaths::Combine(Folder, Sub);
-				FPaths::NormalizeDirectoryName(Path);
-				const int32 Count = CountPhotosInFolder(Path);
-				if (Count > 0)
+				TArray<FString> SubFolders;
+				FileManager.FindFiles(SubFolders, *FPaths::Combine(ParentPath, TEXT("*")), false, true);
+				SubFolders.Sort([](const FString& L, const FString& R) { return L.Compare(R, ESearchCase::IgnoreCase) < 0; });
+				int32 TotalCount = 0;
+				for (const FString& Sub : SubFolders)
 				{
-					FMemoryRoomAlbum Album;
-					Album.Id = Path;
-					Album.Name = Sub;
-					Album.Count = Count;
-					Found.Add(Album);
+					FString Path = FPaths::Combine(ParentPath, Sub);
+					FPaths::NormalizeDirectoryName(Path);
+					const int32 Count = CountPhotosInFolder(Path) + AddFolderTree(Path);
+					if (Count > 0)
+					{
+						FMemoryRoomAlbum Album;
+						Album.Id = Path;
+						Album.Name = Sub;
+						Album.ParentId = ParentPath;
+						Album.Count = Count;
+						Found.Add(Album);
+						TotalCount += Count;
+					}
 				}
-			}
-		}
-#else
-		if (!Folder.IsEmpty() && FileManager.DirectoryExists(*Folder))
-		{
-			const int32 Count = CountPhotosInFolder(Folder);
-			if (Count > 0)
-			{
-				FMemoryRoomAlbum Album;
-				Album.Id = HeadsetFolderAlbumId;
-				Album.Name = TEXT("Headset folder");
-				Album.Count = Count;
-				Found.Add(Album);
-			}
+				return TotalCount;
+			};
+			AddFolderTree(Folder);
 		}
 #endif
 		AsyncTask(ENamedThreads::GameThread, [WeakThis, Generation, Found = MoveTemp(Found)]() mutable
@@ -2219,7 +2242,7 @@ void AMemoryRoomManager::RefreshAlbumList()
 						Manager->FinishAlbumList(MoveTemp(Found), false);
 						return;
 					}
-					Manager->PhotoSource->QueryAlbumsAsync(
+					static_cast<FAndroidMediaStorePhotoSource*>(Manager->PhotoSource.Get())->QueryAlbumsAsync(
 						[WeakThis, Generation, Found = MoveTemp(Found)](bool bSuccess, TArray<FMemoryRoomAlbum> Buckets) mutable
 						{
 							AMemoryRoomManager* Current = WeakThis.Get();
@@ -2245,7 +2268,10 @@ void AMemoryRoomManager::FinishAlbumList(TArray<FMemoryRoomAlbum>&& Found, bool 
 	AllPhotos.Name = TEXT("All photos");
 	for (const FMemoryRoomAlbum& Album : Found)
 	{
-		AllPhotos.Count += Album.Count;
+		if (!Found.ContainsByPredicate([&Album](const FMemoryRoomAlbum& Parent) { return Parent.Id == Album.ParentId; }))
+		{
+			AllPhotos.Count += Album.Count;
+		}
 	}
 	Albums.Add(AllPhotos);
 	Albums.Append(MoveTemp(Found));

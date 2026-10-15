@@ -56,6 +56,17 @@ struct FMemoryRoomMenuRow
 	float PlusHoverBlend = 0.0f;
 };
 
+USTRUCT()
+struct FMemoryRoomFolderTile
+{
+	GENERATED_BODY()
+	UPROPERTY() TObjectPtr<UBoxComponent> Box;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> Panel;
+	UPROPERTY() TObjectPtr<UTextRenderComponent> Text;
+	FString AlbumId;
+	float HoverBlend = 0.0f;
+};
+
 /**
  * The in-headset settings board. Rows of [<] LABEL value [>] plus a few action buttons.
  * Point the free controller at a < or > and pull the trigger. Can float in front of the
@@ -274,6 +285,10 @@ private:
 	void ApplyTilePop(UStaticMeshComponent* Panel, float HalfY, float Blend) const;
 	FMemoryRoomMenuRow* FindRow(UPrimitiveComponent* Component, bool& bOutIsPlus);
 	void PressRow(FMemoryRoomMenuRow& Row, bool bIsPlus);
+	void OpenFolderBrowser();
+	void ShowSettingsPage();
+	void RefreshFolderBrowser();
+	void SetFolderBrowserVisible(bool bVisible);
 
 	UFUNCTION()
 	void HandleSettingsChanged();
@@ -308,8 +323,32 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> ClipMaterial;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> TileMaterial;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> TileHotMaterial;
+	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> BrowserGlassMaterial;
 
 	UPROPERTY() TArray<FMemoryRoomMenuRow> Rows;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> BrowserPanel;
+	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserTitle;
+	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserPathText;
+	UPROPERTY() TObjectPtr<UBoxComponent> BrowserBackBox;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> BrowserBackPanel;
+	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserBackText;
+	UPROPERTY() TObjectPtr<UBoxComponent> BrowserUpBox;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> BrowserUpPanel;
+	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserUpText;
+	UPROPERTY() TObjectPtr<UBoxComponent> BrowserPrevBox;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> BrowserPrevPanel;
+	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserPrevText;
+	UPROPERTY() TObjectPtr<UBoxComponent> BrowserNextBox;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> BrowserNextPanel;
+	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserNextText;
+	UPROPERTY() TObjectPtr<UBoxComponent> BrowserUseBox;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> BrowserUsePanel;
+	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserUseText;
+	UPROPERTY() TArray<FMemoryRoomFolderTile> FolderTiles;
+	FString BrowserCurrentParentId;
+	FString BrowserPendingSelectionId;
+	int32 BrowserPage = 0;
+	bool bFolderBrowserOpen = false;
 	TWeakObjectPtr<UPrimitiveComponent> HoveredComponent;
 	// The palette in effect. Struct defaults are the Hearth look; ApplyUIStyle replaces it.
 	FMemoryRoomWristUIStyle Style;

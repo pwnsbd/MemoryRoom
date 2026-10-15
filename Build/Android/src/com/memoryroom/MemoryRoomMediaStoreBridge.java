@@ -16,7 +16,7 @@ import java.io.InputStream;
 public class MemoryRoomMediaStoreBridge {
     private static Activity activity() { return com.epicgames.unreal.GameActivity.Get(); }
 
-    // Lists the image albums (MediaStore buckets) with their image counts, biggest first.
+    // Lists folders containing images, including parent folders with recursive counts.
     public static String queryAlbumsJson() {
         JSONObject root = new JSONObject();
         try {
@@ -26,29 +26,43 @@ public class MemoryRoomMediaStoreBridge {
             }
 
             ContentResolver cr = a.getContentResolver();
-            String[] projection = new String[] {
-                MediaStore.Images.Media.BUCKET_ID, MediaStore.Images.Media.BUCKET_DISPLAY_NAME
-            };
-            java.util.LinkedHashMap<String, String> names = new java.util.LinkedHashMap<>();
+            String[] projection = new String[] { MediaStore.Images.Media.RELATIVE_PATH };
             final java.util.HashMap<String, Integer> counts = new java.util.HashMap<>();
             try (Cursor cursor = cr.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, null)) {
                 while (cursor != null && cursor.moveToNext()) {
                     if (cursor.isNull(0)) continue;
-                    String id = cursor.getString(0);
-                    String name = cursor.getString(1);
-                    if (!names.containsKey(id)) names.put(id, name == null ? "" : name);
-                    Integer c = counts.get(id);
-                    counts.put(id, c == null ? 1 : c + 1);
+                    String path = cursor.getString(0);
+                    if (path == null || path.length() == 0) continue;
+                    if (!path.endsWith("/")) path += "/";
+                    String current = path;
+                    while (current.length() > 0) {
+                        Integer c = counts.get(current);
+                        counts.put(current, c == null ? 1 : c + 1);
+                        int end = current.length() - 1;
+                        int slash = current.lastIndexOf('/', end - 1);
+                        if (slash < 0) break;
+                        current = current.substring(0, slash + 1);
+                    }
                 }
             }
-            java.util.ArrayList<String> ids = new java.util.ArrayList<>(names.keySet());
-            java.util.Collections.sort(ids, new java.util.Comparator<String>() {
-                @Override public int compare(String x, String y) { return counts.get(y) - counts.get(x); }
+            java.util.ArrayList<String> paths = new java.util.ArrayList<>(counts.keySet());
+            java.util.Collections.sort(paths, new java.util.Comparator<String>() {
+                @Override public int compare(String x, String y) {
+                    int byCount = counts.get(y) - counts.get(x);
+                    return byCount != 0 ? byCount : x.compareToIgnoreCase(y);
+                }
             });
             JSONArray albums = new JSONArray();
-            for (String id : ids) {
+            for (String path : paths) {
+                String trimmed = path.substring(0, path.length() - 1);
+                int slash = trimmed.lastIndexOf('/');
+                String name = trimmed.substring(slash + 1);
+                String parentPath = slash < 0 ? "" : trimmed.substring(0, slash + 1);
                 JSONObject o = new JSONObject();
-                o.put("id", id); o.put("name", names.get(id)); o.put("count", counts.get(id));
+                o.put("id", "@path:" + path);
+                o.put("name", name);
+                o.put("parentId", parentPath.length() == 0 ? "@root" : "@path:" + parentPath);
+                o.put("count", counts.get(path));
                 albums.put(o);
             }
             root.put("success", true); root.put("albums", albums);
@@ -58,7 +72,7 @@ public class MemoryRoomMediaStoreBridge {
         return root.toString();
     }
 
-    // bucketId empty or null = every image; otherwise only that album.
+    // Accepts legacy numeric bucket IDs or '@path:' relative paths. Paths include descendants.
     public static String queryImagesJson(int offset, int limit, String bucketId) {
         JSONObject root = new JSONObject();
         try {
@@ -76,9 +90,19 @@ public class MemoryRoomMediaStoreBridge {
                 MediaStore.Images.Media.DATE_TAKEN, MediaStore.Images.Media.DATE_MODIFIED
             };
             String sort = MediaStore.Images.Media.DATE_MODIFIED + " DESC";
-            boolean filtered = bucketId != null && bucketId.length() > 0;
-            String selection = filtered ? MediaStore.Images.Media.BUCKET_ID + " = ?" : null;
-            String[] selectionArgs = filtered ? new String[] { bucketId } : null;
+            boolean filtered = bucketId != null && bucketId.length() > 0 && !"@all".equals(bucketId);
+            String selection = null;
+            String[] selectionArgs = null;
+            if (filtered && bucketId.startsWith("@path:")) {
+                String path = bucketId.substring("@path:".length());
+                if (!path.endsWith("/")) path += "/";
+                path = path.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+                selection = MediaStore.Images.Media.RELATIVE_PATH + " LIKE ? ESCAPE '\\'";
+                selectionArgs = new String[] { path + "%" };
+            } else if (filtered) {
+                selection = MediaStore.Images.Media.BUCKET_ID + " = ?";
+                selectionArgs = new String[] { bucketId };
+            }
             try (Cursor cursor = cr.query(collection, projection, selection, selectionArgs, sort)) {
                 int total = cursor == null ? 0 : cursor.getCount();
                 JSONArray items = new JSONArray();

@@ -92,7 +92,16 @@ void FAndroidMediaStorePhotoSource::QueryPhotosAsync(int32 Offset, int32 Limit, 
 				jmethodID Method = Env->GetStaticMethodID(BridgeClass, "queryImagesJson", "(IILjava/lang/String;)Ljava/lang/String;");
 				if (!FAndroidMediaStorePhotoSource::CheckAndClearJavaException(Env, TEXT("GetStaticMethodID queryImagesJson")) && Method)
 				{
-					jstring JsonString = static_cast<jstring>(Env->CallStaticObjectMethod(BridgeClass, Method, Offset, Limit));
+					jstring BucketString = Env->NewStringUTF(TCHAR_TO_UTF8(*BucketId));
+					const bool bBucketStringException = FAndroidMediaStorePhotoSource::CheckAndClearJavaException(Env, TEXT("NewStringUTF MediaStore folder filter"));
+					if (!BucketString || bBucketStringException)
+					{
+						Env->DeleteLocalRef(BridgeClass);
+						AsyncTask(ENamedThreads::GameThread, [Callback]() { Callback.ExecuteIfBound(false, TArray<FMemoryPhotoMetadata>(), 0); });
+						return;
+					}
+					jstring JsonString = static_cast<jstring>(Env->CallStaticObjectMethod(BridgeClass, Method, Offset, Limit, BucketString));
+					Env->DeleteLocalRef(BucketString);
 					if (!FAndroidMediaStorePhotoSource::CheckAndClearJavaException(Env, TEXT("CallStaticObjectMethod queryImagesJson")) && JsonString)
 					{
 						const char* Utf = Env->GetStringUTFChars(JsonString, nullptr);
@@ -185,6 +194,7 @@ void FAndroidMediaStorePhotoSource::QueryAlbumsAsync(TFunction<void(bool bSucces
 										FMemoryRoomAlbum Album;
 										(*Obj)->TryGetStringField(TEXT("id"), Album.Id);
 										(*Obj)->TryGetStringField(TEXT("name"), Album.Name);
+										(*Obj)->TryGetStringField(TEXT("parentId"), Album.ParentId);
 										Album.Count = (*Obj)->GetIntegerField(TEXT("count"));
 										if (!Album.Id.IsEmpty() && Album.Count > 0) Albums.Add(Album);
 									}

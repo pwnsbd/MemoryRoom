@@ -69,6 +69,7 @@ struct FMemoryRoomAlbum
 {
 	FString Id;
 	FString Name;
+	FString ParentId;
 	int32 Count = 0;
 };
 
@@ -265,6 +266,10 @@ public:
 	// Commits the album currently previewed by the Photos row. Browsing never loads or saves.
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Settings")
 	bool CommitPhotoAlbumPreview();
+	const TArray<FMemoryRoomAlbum>& GetPhotoAlbums() const { return Albums; }
+	const FString& GetSelectedPhotoAlbumId() const { return SelectedAlbumId; }
+	bool SelectPhotoAlbumById(const FString& Id);
+	void RefreshPhotoFolders() { RefreshAlbumList(); }
 
 	// Loads saved settings and pushes them into the world. Called at BeginPlay.
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Settings")

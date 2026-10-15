@@ -232,6 +232,52 @@ void AMemoryRoomMenuActor::BuildBoard()
 		Row.Label = MakeText(Tag + TEXT("Label"), TileY, TileZ, ActionSize, LabelTracking);
 		Rows.Add(Row);
 	}
+
+	// Directory overlay uses the same glass, text, and visibility-ray targets as the settings
+	// page. It is built in-place so the existing dual-hand pointer continues to own input.
+	auto BrowserSlab = [this, Cube](const TCHAR* Name, FVector Loc, FVector Scale) -> UStaticMeshComponent*
+	{
+		UStaticMeshComponent* C = CreateDefaultSubobject<UStaticMeshComponent>(Name);
+		C->SetupAttachment(SceneRoot); C->SetStaticMesh(Cube); C->SetRelativeLocation(Loc); C->SetRelativeScale3D(Scale);
+		C->SetCollisionEnabled(ECollisionEnabled::NoCollision); C->SetCastShadow(false); return C;
+	};
+	auto BrowserTextComponent = [this](const TCHAR* Name, FVector Loc, float Size) -> UTextRenderComponent*
+	{
+		UTextRenderComponent* C = CreateDefaultSubobject<UTextRenderComponent>(Name);
+		C->SetupAttachment(SceneRoot); C->SetRelativeLocation(Loc); C->SetRelativeRotation(FRotator(0,180,0));
+		C->SetHorizontalAlignment(EHTA_Center); C->SetVerticalAlignment(EVRTA_TextCenter); C->SetWorldSize(Size); C->SetTextRenderColor(LabelColor); return C;
+	};
+	auto BrowserBox = [this](const TCHAR* Name, FVector Loc, FVector Extent) -> UBoxComponent*
+	{
+		UBoxComponent* C = CreateDefaultSubobject<UBoxComponent>(Name); C->SetupAttachment(SceneRoot); C->SetRelativeLocation(Loc);
+		C->SetBoxExtent(Extent); C->SetCollisionEnabled(ECollisionEnabled::QueryOnly); C->SetCollisionResponseToAllChannels(ECR_Ignore); C->SetCollisionResponseToChannel(ECC_Visibility,ECR_Block); return C;
+	};
+	BrowserPanel = BrowserSlab(TEXT("FolderBrowserPanel"), FVector(0.4f,0,-11), FVector(0.018f,0.35f,0.45f));
+	BrowserTitle = BrowserTextComponent(TEXT("FolderBrowserTitle"), FVector(-2.8f,0,0), 4.0f);
+	BrowserTitle->SetText(FText::FromString(TEXT("PHOTO FOLDERS")));
+	BrowserPathText = BrowserTextComponent(TEXT("FolderBrowserPath"), FVector(-2.8f,0,-5), 2.0f);
+	auto MakeBrowserButton = [&](const TCHAR* Name, float Y, float Z, float HalfY, float HalfZ, float TextSize,
+		TObjectPtr<UBoxComponent>& Box, TObjectPtr<UStaticMeshComponent>& Panel, TObjectPtr<UTextRenderComponent>& Label, const TCHAR* Caption)
+	{
+		Box = BrowserBox(*FString(Name).Append(TEXT("Box")), FVector(-3.4f,Y,Z), FVector(1.2f,HalfY,HalfZ));
+		Panel = BrowserSlab(*FString(Name).Append(TEXT("Panel")), FVector(-2.2f,Y,Z), FVector(0.006f,HalfY*0.02f,HalfZ*0.02f));
+		Label = BrowserTextComponent(*FString(Name).Append(TEXT("Text")), FVector(-3.0f,Y,Z), TextSize); Label->SetText(FText::FromString(Caption));
+	};
+	MakeBrowserButton(TEXT("BrowserBack"),-13,7,4,2,1.7f,BrowserBackBox,BrowserBackPanel,BrowserBackText,TEXT("BACK"));
+	MakeBrowserButton(TEXT("BrowserUp"),-4,7,4,2,1.7f,BrowserUpBox,BrowserUpPanel,BrowserUpText,TEXT("UP"));
+	MakeBrowserButton(TEXT("BrowserPrev"),8,7,3,2,1.7f,BrowserPrevBox,BrowserPrevPanel,BrowserPrevText,TEXT("<"));
+	MakeBrowserButton(TEXT("BrowserNext"),13,7,3,2,1.7f,BrowserNextBox,BrowserNextPanel,BrowserNextText,TEXT(">"));
+	MakeBrowserButton(TEXT("BrowserUse"),0,-24,12,2.2f,2.0f,BrowserUseBox,BrowserUsePanel,BrowserUseText,TEXT("USE THIS FOLDER"));
+	for (int32 i=0;i<6;++i)
+	{
+		const int32 Col=i%3, Row=i/3; const float Y=(Col-1)*9.0f, Z=0.0f-Row*10.0f;
+		FMemoryRoomFolderTile Tile;
+		Tile.Box=BrowserBox(*FString::Printf(TEXT("FolderTile%dBox"),i),FVector(-3.4f,Y,Z),FVector(1.2f,3.7f,4.0f));
+		Tile.Panel=BrowserSlab(*FString::Printf(TEXT("FolderTile%dPanel"),i),FVector(-2.2f,Y,Z),FVector(0.006f,0.074f,0.08f));
+		Tile.Text=BrowserTextComponent(*FString::Printf(TEXT("FolderTile%dText"),i),FVector(-3.0f,Y,Z),1.6f);
+		FolderTiles.Add(Tile);
+	}
+	SetFolderBrowserVisible(false);
 }
 
 void AMemoryRoomMenuActor::ApplyBoardScale()
@@ -628,6 +674,15 @@ void AMemoryRoomMenuActor::TickHoverAnimation(float DeltaSeconds)
 			ApplyTilePop(Row.PlusPanel, Row.TileHalfY, Row.PlusHoverBlend);
 		}
 	}
+	if (bFolderBrowserOpen)
+	{
+		for (FMemoryRoomFolderTile& Tile : FolderTiles)
+		{
+			const float Target=Hovered==Tile.Box ? 1.0f : 0.0f;
+			Tile.HoverBlend=FMath::FInterpTo(Tile.HoverBlend,Target,DeltaSeconds,HoverAnimationSpeed);
+			if (Tile.Panel) Tile.Panel->SetRelativeScale3D(FVector(0.006f,0.074f*(1.0f+Tile.HoverBlend*TileHoverPop),0.08f*(1.0f+Tile.HoverBlend*TileHoverPop)));
+		}
+	}
 }
 
 void AMemoryRoomMenuActor::Tick(float DeltaSeconds)
@@ -664,6 +719,7 @@ void AMemoryRoomMenuActor::OpenMenu()
 	SetOtherWristButtonsHidden(true);
 	ApplyBoardScale();
 	RefreshText();
+	if (MemoryRoomManager && !MemoryRoomManager->HasPhotoSourceChoice()) OpenFolderBrowser();
 }
 
 void AMemoryRoomMenuActor::CloseMenu()
@@ -707,6 +763,12 @@ void AMemoryRoomMenuActor::SetOtherWristButtonsHidden(bool bShouldHide)
 bool AMemoryRoomMenuActor::IsMenuComponent(const UPrimitiveComponent* Component) const
 {
 	if (!bMenuOpen || !Component) return false;
+	if (bFolderBrowserOpen)
+	{
+		if (Component == BrowserBackBox || Component == BrowserUpBox || Component == BrowserPrevBox || Component == BrowserNextBox || Component == BrowserUseBox) return true;
+		for (const FMemoryRoomFolderTile& Tile : FolderTiles) if (Tile.Box == Component) return true;
+		return Component == BrowserPanel;
+	}
 	if (Component == BackgroundPanel) return true;
 	for (const FMemoryRoomMenuRow& Row : Rows)
 	{
@@ -734,6 +796,35 @@ void AMemoryRoomMenuActor::SetHoveredComponent(UPrimitiveComponent* Component)
 
 bool AMemoryRoomMenuActor::PressHoveredButton()
 {
+	if (bFolderBrowserOpen)
+	{
+		UPrimitiveComponent* Hit=HoveredComponent.Get();
+		if (Hit == BrowserBackBox) ShowSettingsPage();
+		else if (Hit == BrowserUpBox)
+		{
+			for (const FMemoryRoomAlbum& Album : MemoryRoomManager->GetPhotoAlbums()) if (Album.Id == BrowserCurrentParentId) { BrowserCurrentParentId=Album.ParentId; break; }
+			if (!MemoryRoomManager->GetPhotoAlbums().ContainsByPredicate([this](const FMemoryRoomAlbum& Album){return Album.Id==BrowserCurrentParentId;})) BrowserCurrentParentId.Reset();
+			BrowserPendingSelectionId=BrowserCurrentParentId;
+			BrowserPage=0; RefreshFolderBrowser();
+		}
+		else if (Hit == BrowserPrevBox) { BrowserPage=FMath::Max(0,BrowserPage-1); RefreshFolderBrowser(); }
+		else if (Hit == BrowserNextBox) { ++BrowserPage; RefreshFolderBrowser(); }
+		else if (Hit == BrowserUseBox)
+		{
+			if (MemoryRoomManager && MemoryRoomManager->SelectPhotoAlbumById(BrowserPendingSelectionId))
+			{
+				StatusMessage=TEXT("Photo folder saved. Loading photos..."); ShowSettingsPage(); RefreshText();
+			}
+		}
+		else
+		{
+			for (FMemoryRoomFolderTile& Tile : FolderTiles) if (Tile.Box == Hit && !Tile.AlbumId.IsEmpty())
+			{
+				BrowserCurrentParentId=Tile.AlbumId; BrowserPendingSelectionId=Tile.AlbumId; BrowserPage=0; RefreshFolderBrowser(); break;
+			}
+		}
+		return true;
+	}
 	bool bIsPlus = false;
 	if (FMemoryRoomMenuRow* Row = FindRow(HoveredComponent.Get(), bIsPlus))
 	{
@@ -775,20 +866,94 @@ void AMemoryRoomMenuActor::PressRow(FMemoryRoomMenuRow& Row, bool bIsPlus)
 		if (MemoryRoomManager) MemoryRoomManager->ReloadPhotoLibrary();
 		break;
 	case EMemoryRoomMenuAction::ChoosePhotoSource:
-		if (MemoryRoomManager && MemoryRoomManager->CommitPhotoAlbumPreview())
-		{
-			StatusMessage = TEXT("Photo folder saved. Loading photos...");
-		}
-		else
-		{
-			StatusMessage = TEXT("Choose a folder with the Photos arrows first.");
-		}
+		OpenFolderBrowser();
 		break;
 	case EMemoryRoomMenuAction::Close:
 		CloseMenu();
 		break;
 	}
 	RefreshText();
+}
+
+void AMemoryRoomMenuActor::OpenFolderBrowser()
+{
+	ResolveManager();
+	if (!MemoryRoomManager) return;
+	bFolderBrowserOpen=true; BrowserPage=0;
+	BrowserCurrentParentId=MemoryRoomManager->GetSelectedPhotoAlbumId();
+	// "All photos" is a selection, not a directory level.
+	if (BrowserCurrentParentId == TEXT("@all")) BrowserCurrentParentId.Reset();
+	if (!MemoryRoomManager->GetPhotoAlbums().ContainsByPredicate([this](const FMemoryRoomAlbum& Album){return Album.Id==BrowserCurrentParentId;})) BrowserCurrentParentId.Reset();
+	BrowserPendingSelectionId=BrowserCurrentParentId;
+	SetFolderBrowserVisible(true); RefreshFolderBrowser();
+	MemoryRoomManager->RefreshPhotoFolders();
+}
+
+void AMemoryRoomMenuActor::ShowSettingsPage()
+{
+	bFolderBrowserOpen=false; SetFolderBrowserVisible(false); RefreshText();
+}
+
+void AMemoryRoomMenuActor::SetFolderBrowserVisible(bool bVisible)
+{
+	auto SetVisible=[](UPrimitiveComponent* C, bool bShow) { if (C) C->SetVisibility(bShow,true); };
+	SetVisible(BrowserPanel,bVisible); SetVisible(BrowserTitle,bVisible); SetVisible(BrowserPathText,bVisible);
+	SetVisible(BrowserBackBox,bVisible); SetVisible(BrowserBackPanel,bVisible); SetVisible(BrowserBackText,bVisible);
+	SetVisible(BrowserUpBox,bVisible); SetVisible(BrowserUpPanel,bVisible); SetVisible(BrowserUpText,bVisible);
+	SetVisible(BrowserPrevBox,bVisible); SetVisible(BrowserPrevPanel,bVisible); SetVisible(BrowserPrevText,bVisible);
+	SetVisible(BrowserNextBox,bVisible); SetVisible(BrowserNextPanel,bVisible); SetVisible(BrowserNextText,bVisible);
+	SetVisible(BrowserUseBox,bVisible); SetVisible(BrowserUsePanel,bVisible); SetVisible(BrowserUseText,bVisible);
+	for (FMemoryRoomFolderTile& Tile : FolderTiles) { SetVisible(Tile.Box,bVisible); SetVisible(Tile.Panel,bVisible); SetVisible(Tile.Text,bVisible); }
+	for (FMemoryRoomMenuRow& Row : Rows) { SetVisible(Row.MinusBox,!bVisible); SetVisible(Row.PlusBox,!bVisible); SetVisible(Row.MinusPanel,!bVisible); SetVisible(Row.PlusPanel,!bVisible); SetVisible(Row.MinusGlyph,!bVisible); SetVisible(Row.PlusGlyph,!bVisible); SetVisible(Row.Label,!bVisible); SetVisible(Row.ValueText,!bVisible); }
+	auto SetTargetCollision=[](UBoxComponent* Box,bool bEnabled){if(Box) Box->SetCollisionEnabled(bEnabled?ECollisionEnabled::QueryOnly:ECollisionEnabled::NoCollision);};
+	SetTargetCollision(BrowserBackBox,bVisible); SetTargetCollision(BrowserUpBox,bVisible); SetTargetCollision(BrowserPrevBox,bVisible); SetTargetCollision(BrowserNextBox,bVisible); SetTargetCollision(BrowserUseBox,bVisible);
+	for (FMemoryRoomFolderTile& Tile : FolderTiles) SetTargetCollision(Tile.Box,bVisible && Tile.Box->IsVisible());
+	for (FMemoryRoomMenuRow& Row : Rows) { SetTargetCollision(Row.MinusBox,!bVisible); SetTargetCollision(Row.PlusBox,!bVisible && Row.PlusBox); }
+	SetVisible(TitleText,!bVisible); SetVisible(StatusText,!bVisible); SetVisible(PaperPanel,!bVisible); SetVisible(ClipPanel,!bVisible); SetVisible(TitleRule,!bVisible); SetVisible(SectionRule,!bVisible);
+}
+
+void AMemoryRoomMenuActor::RefreshFolderBrowser()
+{
+	if (!MemoryRoomManager) return;
+	const TArray<FMemoryRoomAlbum>& Albums=MemoryRoomManager->GetPhotoAlbums();
+	TArray<const FMemoryRoomAlbum*> VisibleFolders;
+	for (const FMemoryRoomAlbum& Album : Albums)
+	{
+		if (Album.ParentId==BrowserCurrentParentId) VisibleFolders.Add(&Album);
+		else if (BrowserCurrentParentId.IsEmpty() && !Album.ParentId.IsEmpty())
+		{
+			const bool bParentListed=Albums.ContainsByPredicate([&Album](const FMemoryRoomAlbum& Candidate){return Candidate.Id==Album.ParentId;});
+			if (!bParentListed) VisibleFolders.Add(&Album); // Desktop roots carry a filesystem path as ParentId.
+		}
+	}
+	VisibleFolders.Sort([](const FMemoryRoomAlbum& A,const FMemoryRoomAlbum& B){return A.Name < B.Name;});
+	const int32 PageCount=FMath::Max(1,FMath::DivideAndRoundUp(VisibleFolders.Num(),FolderTiles.Num()));
+	BrowserPage=FMath::Clamp(BrowserPage,0,PageCount-1);
+	for (int32 i=0;i<FolderTiles.Num();++i)
+	{
+		FMemoryRoomFolderTile& Tile=FolderTiles[i]; const int32 Index=BrowserPage*FolderTiles.Num()+i;
+		if (VisibleFolders.IsValidIndex(Index))
+		{
+			const FMemoryRoomAlbum& Album=*VisibleFolders[Index]; Tile.AlbumId=Album.Id;
+			Tile.Text->SetText(FText::FromString(FString::Printf(TEXT("%s\n%d photos"),*Album.Name,Album.Count)));
+			Tile.Panel->SetVisibility(true); Tile.Box->SetVisibility(true); Tile.Text->SetVisibility(true);
+		}
+		else { Tile.AlbumId.Reset(); Tile.Panel->SetVisibility(false); Tile.Box->SetVisibility(false); Tile.Text->SetVisibility(false); Tile.Box->SetCollisionEnabled(ECollisionEnabled::NoCollision); }
+		if (VisibleFolders.IsValidIndex(Index)) Tile.Box->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+	}
+	FString Path=TEXT("ROOT");
+	for (const FMemoryRoomAlbum& Album : Albums) if (Album.Id==BrowserCurrentParentId) { Path=Album.Name; break; }
+	const FString ShortPath = Path.Len() > 20 ? Path.Left(18) + TEXT("..") : Path;
+	BrowserPathText->SetText(FText::FromString(FString::Printf(TEXT("%s     %d / %d"),*ShortPath,BrowserPage+1,PageCount)));
+	BrowserUpBox->SetVisibility(!BrowserCurrentParentId.IsEmpty()); BrowserUpPanel->SetVisibility(!BrowserCurrentParentId.IsEmpty()); BrowserUpText->SetVisibility(!BrowserCurrentParentId.IsEmpty());
+	BrowserPrevBox->SetVisibility(BrowserPage>0); BrowserPrevPanel->SetVisibility(BrowserPage>0); BrowserPrevText->SetVisibility(BrowserPage>0);
+	BrowserNextBox->SetVisibility(BrowserPage+1<PageCount); BrowserNextPanel->SetVisibility(BrowserPage+1<PageCount); BrowserNextText->SetVisibility(BrowserPage+1<PageCount);
+	BrowserUpBox->SetCollisionEnabled(BrowserCurrentParentId.IsEmpty()?ECollisionEnabled::NoCollision:ECollisionEnabled::QueryOnly);
+	BrowserPrevBox->SetCollisionEnabled(BrowserPage>0?ECollisionEnabled::QueryOnly:ECollisionEnabled::NoCollision);
+	BrowserNextBox->SetCollisionEnabled(BrowserPage+1<PageCount?ECollisionEnabled::QueryOnly:ECollisionEnabled::NoCollision);
+	const bool bCanUse=!BrowserPendingSelectionId.IsEmpty(); BrowserUseBox->SetVisibility(bCanUse); BrowserUsePanel->SetVisibility(bCanUse); BrowserUseText->SetVisibility(bCanUse);
+	BrowserUseBox->SetCollisionEnabled(bCanUse?ECollisionEnabled::QueryOnly:ECollisionEnabled::NoCollision);
+	BrowserUseText->SetText(FText::FromString(FString::Printf(TEXT("USE FOLDER: %s"),*ShortPath)));
 }
 
 void AMemoryRoomMenuActor::RefreshText()
@@ -817,7 +982,7 @@ void AMemoryRoomMenuActor::RefreshText()
 			case EMemoryRoomMenuAction::ResetView: Text = TEXT("RESET VIEW"); break;
 			case EMemoryRoomMenuAction::JumpToNewest: Text = TEXT("JUMP TO NEWEST"); break;
 			case EMemoryRoomMenuAction::ReloadPhotos: Text = TEXT("RELOAD PHOTOS"); break;
-			case EMemoryRoomMenuAction::ChoosePhotoSource: Text = TEXT("USE PHOTO FOLDER"); break;
+			case EMemoryRoomMenuAction::ChoosePhotoSource: Text = TEXT("OPEN FOLDER"); break;
 			case EMemoryRoomMenuAction::Close: Text = TEXT("CLOSE"); break;
 			}
 			Row.Label->SetText(FText::FromString(Text));
@@ -872,12 +1037,17 @@ void AMemoryRoomMenuActor::RebuildStyleMaterials()
 	// Tiles: a key-cap slightly darker than the page at rest, warm rust under the pointer.
 	TileMaterial = MemoryRoomUI::MakeSolidMaterial(GlassBaseMaterial, PaperColor * 0.80f, this);
 	TileHotMaterial = MemoryRoomUI::MakeSolidMaterial(GlassBaseMaterial, FLinearColor(0.58f, 0.34f, 0.15f), this);
+	BrowserGlassMaterial = MemoryRoomUI::MakeGlassMaterial(GlassBaseMaterial, Style, this);
 
 	if (BackgroundPanel && BoardMaterial) BackgroundPanel->SetMaterial(0, BoardMaterial);
 	if (PaperPanel && PaperMaterial) PaperPanel->SetMaterial(0, PaperMaterial);
 	if (ClipPanel && ClipMaterial) ClipPanel->SetMaterial(0, ClipMaterial);
 	if (TitleRule && InkMaterial) TitleRule->SetMaterial(0, InkMaterial);
 	if (SectionRule && InkMaterial) SectionRule->SetMaterial(0, InkMaterial);
+	if (BrowserPanel && BrowserGlassMaterial) BrowserPanel->SetMaterial(0, BrowserGlassMaterial);
+	for (FMemoryRoomFolderTile& Tile : FolderTiles) if (Tile.Panel && TileMaterial) Tile.Panel->SetMaterial(0, TileMaterial);
+	for (UStaticMeshComponent* Panel : {BrowserBackPanel.Get(), BrowserUpPanel.Get(), BrowserPrevPanel.Get(), BrowserNextPanel.Get(), BrowserUsePanel.Get()})
+		if (Panel && TileMaterial) Panel->SetMaterial(0, TileMaterial);
 	for (FMemoryRoomMenuRow& Row : Rows)
 	{
 		if (Row.MinusPanel && TileMaterial) Row.MinusPanel->SetMaterial(0, TileMaterial);
@@ -918,11 +1088,21 @@ void AMemoryRoomMenuActor::ApplyHoverVisuals()
 			Row.ValueText->SetTextRenderColor((bMinusHot || bPlusHot) ? HighlightColor : ValueColor);
 		}
 	}
+	for (FMemoryRoomFolderTile& Tile : FolderTiles) if (Tile.Panel && TileMaterial && TileHotMaterial) Tile.Panel->SetMaterial(0,Hovered==Tile.Box ? TileHotMaterial : TileMaterial);
+	auto SetButtonHot=[Hovered,this](UPrimitiveComponent* Box,UStaticMeshComponent* Panel,UTextRenderComponent* Text)
+	{
+		const bool bHot=Hovered==Box;
+		if (Panel && TileMaterial && TileHotMaterial) Panel->SetMaterial(0,bHot?TileHotMaterial:TileMaterial);
+		if (Text) Text->SetTextRenderColor(bHot?HighlightColor:LabelColor);
+	};
+	SetButtonHot(BrowserBackBox,BrowserBackPanel,BrowserBackText); SetButtonHot(BrowserUpBox,BrowserUpPanel,BrowserUpText);
+	SetButtonHot(BrowserPrevBox,BrowserPrevPanel,BrowserPrevText); SetButtonHot(BrowserNextBox,BrowserNextPanel,BrowserNextText); SetButtonHot(BrowserUseBox,BrowserUsePanel,BrowserUseText);
 }
 
 void AMemoryRoomMenuActor::HandleSettingsChanged()
 {
 	if (MemoryRoomManager && MemoryRoomManager->HasPhotoSourceChoice()) StatusMessage.Reset();
+	if (bFolderBrowserOpen) RefreshFolderBrowser();
 	RefreshText();
 }
 void AMemoryRoomMenuActor::HandleReloadStarted() { StatusMessage = TEXT("Refreshing photos..."); RefreshText(); }
