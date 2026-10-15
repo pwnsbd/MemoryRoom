@@ -4,6 +4,7 @@
 #include "GameFramework/Actor.h"
 #include "AMemoryRoomManager.h"
 #include "MemoryRoomThemeAsset.h" // FMemoryRoomWristUIStyle
+#include "MemoryRoomUIGlass.h" // MemoryRoomUI::EGlassIcon
 #include "MemoryRoomMenuActor.generated.h"
 
 class UBoxComponent;
@@ -24,13 +25,14 @@ enum class EMemoryRoomMenuAction : uint8
 	Close
 };
 
-// One tile on the settings panel:
+// One row on the settings board.
 //
-//        PHOTO SPACING        <- Label
+// Setting rows (compact, two to a line):
+//        Photo spacing        <- Label
 //     [ < ]   12   [ > ]      <- MinusBox / ValueText / PlusBox
 //
-// Action tiles use a single wide press (the Minus box) with the Label inside it and no
-// Plus box or value.
+// Action rows are one full-width chip (the Minus box) with a painted Icon at its left and
+// the Label after it, left-aligned. No Plus box or value.
 USTRUCT()
 struct FMemoryRoomMenuRow
 {
@@ -48,9 +50,13 @@ struct FMemoryRoomMenuRow
 	UPROPERTY() TObjectPtr<UTextRenderComponent> PlusGlyph;
 	UPROPERTY() TObjectPtr<UTextRenderComponent> Label;
 	UPROPERTY() TObjectPtr<UTextRenderComponent> ValueText;
+	// Painted icon plane on action chips (null on setting rows).
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> Icon;
+	MemoryRoomUI::EGlassIcon IconKind = MemoryRoomUI::EGlassIcon::Folder;
 
-	// Half-width of each press tile, so the hover pop can rebuild its scale.
+	// Half-extents of each press tile, so the hover pop can rebuild its scale.
 	float TileHalfY = 0.0f;
+	float TileHalfZ = 0.0f;
 	// 0 at rest, 1 fully hovered; eased toward the target every tick.
 	float MinusHoverBlend = 0.0f;
 	float PlusHoverBlend = 0.0f;
@@ -77,15 +83,21 @@ struct FMemoryRoomFolderButton
 	UPROPERTY() TObjectPtr<UBoxComponent> Box;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> Panel;
 	UPROPERTY() TObjectPtr<UTextRenderComponent> Label;
+	// Painted icon plane (null when the button is text only).
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> Icon;
+	MemoryRoomUI::EGlassIcon IconKind = MemoryRoomUI::EGlassIcon::Folder;
 	float HalfY = 2.0f;
 	float HalfZ = 2.0f;
 	float HoverBlend = 0.0f;
 	// True when this button is the always-amber primary action.
 	bool bPrimary = false;
+	// True for the 2:1 "Up" chip, which has its own glass texture.
+	bool bUpShape = false;
 };
 
 /**
- * The in-headset settings board. Rows of [<] LABEL value [>] plus a few action buttons.
+ * The in-headset settings board. A column of full-width action chips (icon + label) over a
+ * compact grid of [<] value [>] settings.
  * Point the free controller at a < or > and pull the trigger. Can float in front of the
  * player (toggled by a face button) or ride the left controller.
  *
@@ -93,8 +105,8 @@ struct FMemoryRoomFolderButton
  * board with smaller glass chips, amber highlight on hover / selection, warm off-white text.
  * Fixed look, not themed. Opens with a short scale-in and closes the same way.
  *
- * "Choose folder" opens a separate floating folder window (same glass) in front of the
- * view; the board stays up beside it.
+ * "Choose folder" opens the folder window (same glass) beside the board: same plane and
+ * scale, to its right, top edges aligned, turned a few degrees inward toward the viewer.
  */
 UCLASS(Blueprintable)
 class MEMORYROOM_API AMemoryRoomMenuActor : public AActor
@@ -199,17 +211,15 @@ protected:
 	TObjectPtr<UHapticFeedbackEffect_Base> PressHapticEffect;
 
 	// --- Folder window placement ---
-	// The folder window floats this far ahead of the view, a little below eye height. The
-	// settings board slides aside (yawed by BoardYawWhenFolderOpenDegrees around the viewer)
-	// while it is open so the two never overlap.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Folder Window", meta = (ClampMin = "40.0"))
-	float FolderWindowDistanceCm = 110.0f;
+	// The folder window hangs off the board's right edge in the board's own plane and scale
+	// (top edges aligned). While it is open the board slides left so the pair is centred.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Folder Window", meta = (ClampMin = "0.0", ClampMax = "20.0"))
+	float FolderWindowGapCm = 4.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Folder Window")
-	float FolderWindowHeightOffsetCm = -12.0f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Folder Window")
-	float BoardYawWhenFolderOpenDegrees = -34.0f;
+	// Turns the window toward the viewer (about its own vertical axis). 12 is the most the
+	// layout contract allows; 0 keeps it flat with the board.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Folder Window", meta = (ClampMin = "0.0", ClampMax = "12.0"))
+	float FolderWindowInwardYawDegrees = 8.0f;
 
 	// --- Style ---
 
@@ -316,6 +326,7 @@ private:
 	void ToggleFolderBrowser();
 	void SetFolderBrowserVisible(bool bVisible);
 	void RefreshFolderBrowser();
+	// Hangs the window off the board's right edge (top-aligned) and works out the pair centre.
 	void PositionFolderWindow();
 	bool PressFolderWindow(UPrimitiveComponent* Hit);
 	bool IsFolderWindowComponent(const UPrimitiveComponent* Component) const;
@@ -335,6 +346,8 @@ private:
 	// The frosted glass board behind the rows (a flat plane so its rounded corners show).
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> BackgroundPanel;
 	UPROPERTY() TObjectPtr<UTextRenderComponent> TitleText;
+	// "Photos: <current folder>" under the title.
+	UPROPERTY() TObjectPtr<UTextRenderComponent> SubtitleText;
 	UPROPERTY() TObjectPtr<UTextRenderComponent> StatusText;
 	// Every glass plane (board, chips, folder window), so a face flip can be applied in one go.
 	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> GlassFaces;
@@ -345,12 +358,15 @@ private:
 	UPROPERTY() TObjectPtr<UPointLightComponent> BoardLight;
 	UPROPERTY() TObjectPtr<UPointLightComponent> FolderLight;
 
-	// <= 8 distinct glass textures, painted once per style rebuild.
+	// Eleven frosted glass textures (each <= 256 px) plus small painted icons, all painted once
+	// per style rebuild.
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> BoardGlassMaterial;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> SquareChipMaterial;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> SquareChipHotMaterial;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> WideChipMaterial;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> WideChipHotMaterial;
+	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> UpChipMaterial;
+	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> UpChipHotMaterial;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> FolderWindowMaterial;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> FolderTileMaterial;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> FolderTileHotMaterial;
@@ -358,7 +374,8 @@ private:
 	UPROPERTY() TArray<FMemoryRoomMenuRow> Rows;
 
 	// --- Folder window ---
-	// Its own root, detached from the board's transform and scale, placed in front of the view.
+	// Its own root, a child of the board's root: it shares the board's pose, scale and open
+	// animation, sits to the board's right, and carries the small inward yaw.
 	UPROPERTY() TObjectPtr<USceneComponent> FolderRoot;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> BrowserPanel;
 	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserPathText;
@@ -381,8 +398,13 @@ private:
 	int32 BrowserLastAlbumCount = -1;
 	bool bBrowserPendingShown = false;
 	// Board panel size in cm (before BoardScale), for painting its texture.
-	float BoardPanelWidthCm = 44.0f;
+	float BoardPanelWidthCm = 34.0f;
 	float BoardPanelHeightCm = 40.0f;
+	// Board-local Y of the middle of the board + folder window pair, so opening the window can
+	// slide the board left by that much (times BoardScale) and keep the pair centred.
+	float FolderPairCenterYCm = 0.0f;
+	// Board-local Z of the top edge of the glass board, for top-aligning the folder window.
+	float BoardTopLocalZCm = 0.0f;
 	TWeakObjectPtr<UPrimitiveComponent> HoveredComponent;
 	// Fixed warm glass text palette (not themed).
 	FColor TitleColor = FColor(255, 246, 234);
