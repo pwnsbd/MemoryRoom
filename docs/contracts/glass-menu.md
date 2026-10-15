@@ -29,7 +29,7 @@ User decision 2026-10-15: drop the current (clipboard / Hearth-derived) menu loo
 - Long names truncate with "…"; tiles never overlap.
 
 ## Perf budget
-- Textures painted once (on build / style change), not per frame. ≤ 8 distinct glass textures, each ≤ 256×256. No new per-frame allocations. Keep 72 fps on Quest.
+- Textures painted once (on build / style change), not per frame. Rev 2: 11 frosted glass textures (each <= 256 px on the long side) plus 9 painted icon textures (64 x 64, shared by every plane that shows the shape). No new per-frame allocations. Keep 72 fps on Quest.
 
 ## Out of scope
 - Wrist pucks and the photo hover halo keep their current look (later pass if the user wants).
@@ -56,3 +56,8 @@ VR Preview runs on the PC, so there are no headset folders there; the PC path sh
 - A folder with loose photos AND subfolders is still selectable ("Use this folder" uses that folder's own photos + descendants, as today).
 - Folders with zero photos in their subtree stay hidden. Scan off the game thread (as now); cap depth at 6 and skip hidden/system folders (names starting with "." , AppData, node_modules).
 - Android path (MediaStore buckets) unchanged.
+
+## Build notes (rev 2 implementation)
+- Settings (Spiral twist, Dust, ...) stay a compact two-per-line [<] value [>] block under the single column of action chips: eleven more full-width rows would make the board over a metre tall. The "Photos" album-cycling setting is off the board (Choose folder + the subtitle replace it).
+- The folder window is a child of the board root (same plane, scale and open animation). While it is open the board slides left by half the pair offset so the pair is centred in view. Tunables: FolderWindowGapCm (4), FolderWindowInwardYawDegrees (8, max 12).
+- On the PC the "All photos" tile is not offered (it only ever scanned the Pictures folder).
