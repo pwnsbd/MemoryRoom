@@ -9,7 +9,7 @@ User decision 2026-10-15: drop the current (clipboard / Hearth-derived) menu loo
 - Highlight (hover, selected, primary "Use this folder"): warm amber/honey tint (~#F2B866 at alpha ~0.25, rim ~0.7). No blue.
 - Text: warm off-white (~#FFF6EA) titles, same at ~60% for secondary lines.
 - Unlit, so it reads the same in day and night presets.
-- Material: an engine translucent unlit material with one texture param (candidate `/Engine/EngineMaterials/Widget3DPassThrough_Translucent`, param `SlateUI` — verify the path + param exist in UE 5.8 before relying on it). Hard-reference it (ConstructorHelpers) so it cooks for Quest. Glass faces use a flat plane, not a cube, so rounded corners show.
+- Material: an engine translucent unlit material with one texture param (candidate `/Engine/EngineMaterials/Widget3DPassThrough_Translucent`, param `SlateUI` — verified in UE 5.8: WidgetComponent.cpp loads /Engine/EngineMaterials/Widget3DPassThrough_Translucent and sets "SlateUI"). Hard-reference it (ConstructorHelpers) so it cooks for Quest. Glass faces use a flat plane, not a cube, so rounded corners show.
 - No scene-colour blur (Quest cost); frosted look comes from the texture only.
 
 ## Inputs
