@@ -56,6 +56,7 @@ struct FMemoryRoomMenuRow
 	float PlusHoverBlend = 0.0f;
 };
 
+// One folder tile in the folder window: glass plane (folder glyph painted in), name, count.
 USTRUCT()
 struct FMemoryRoomFolderTile
 {
@@ -63,8 +64,24 @@ struct FMemoryRoomFolderTile
 	UPROPERTY() TObjectPtr<UBoxComponent> Box;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> Panel;
 	UPROPERTY() TObjectPtr<UTextRenderComponent> Text;
+	UPROPERTY() TObjectPtr<UTextRenderComponent> Detail;
 	FString AlbumId;
 	float HoverBlend = 0.0f;
+};
+
+// A small button in the folder window (Up, close, page arrows, Use this folder).
+USTRUCT()
+struct FMemoryRoomFolderButton
+{
+	GENERATED_BODY()
+	UPROPERTY() TObjectPtr<UBoxComponent> Box;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> Panel;
+	UPROPERTY() TObjectPtr<UTextRenderComponent> Label;
+	float HalfY = 2.0f;
+	float HalfZ = 2.0f;
+	float HoverBlend = 0.0f;
+	// True when this button is the always-amber primary action.
+	bool bPrimary = false;
 };
 
 /**
@@ -72,10 +89,12 @@ struct FMemoryRoomFolderTile
  * Point the free controller at a < or > and pull the trigger. Can float in front of the
  * player (toggled by a face button) or ride the left controller.
  *
- * Styled as lantern glass (see MemoryRoomUIGlass.h): a dark warm slab lit by an ember
- * along its lower edge, gold hairline rules under the title and between the two blocks,
- * ember tiles that warm and lift under the pointer, small-caps labels, gold values. Opens
- * with a short scale-in and closes the same way.
+ * Styled as warm-tinted glassmorphism (see MemoryRoomUIGlass.h): a frosted translucent
+ * board with smaller glass chips, amber highlight on hover / selection, warm off-white text.
+ * Fixed look, not themed. Opens with a short scale-in and closes the same way.
+ *
+ * "Choose folder" opens a separate floating folder window (same glass) in front of the
+ * view; the board stays up beside it.
  */
 UCLASS(Blueprintable)
 class MEMORYROOM_API AMemoryRoomMenuActor : public AActor
@@ -104,7 +123,8 @@ public:
 	void SetHoveredComponent(UPrimitiveComponent* Component);
 	bool PressHoveredButton();
 
-	// Repaints the slab, tiles, rules and text from the active theme's wrist-UI style.
+	// Kept so the theme code can still call it. The glass menu look is fixed and independent of
+	// the theme, so the style is ignored; this only makes sure the glass is painted.
 	void ApplyUIStyle(const FMemoryRoomWristUIStyle& NewStyle);
 
 	// Live state of the reveal gate as one short line, for the calibration readout: the roll
@@ -178,29 +198,34 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu")
 	TObjectPtr<UHapticFeedbackEffect_Base> PressHapticEffect;
 
+	// --- Folder window placement ---
+	// The folder window floats this far ahead of the view, a little below eye height. The
+	// settings board slides aside (yawed by BoardYawWhenFolderOpenDegrees around the viewer)
+	// while it is open so the two never overlap.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Folder Window", meta = (ClampMin = "40.0"))
+	float FolderWindowDistanceCm = 110.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Folder Window")
+	float FolderWindowHeightOffsetCm = -12.0f;
+
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Folder Window")
+	float BoardYawWhenFolderOpenDegrees = -34.0f;
+
 	// --- Style ---
 
-	// Base for every surface: an unlit material with a "Texture" parameter into Emissive.
-	// The engine's EmissiveTexturedMaterial by default.
+	// Translucent base for every glass surface: one "SlateUI" texture parameter carrying colour
+	// and alpha. The engine's Widget3DPassThrough_Translucent by default.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Style")
-	TObjectPtr<UMaterialInterface> GlassBaseMaterial;
+	TObjectPtr<UMaterialInterface> GlassTranslucentMaterial;
 
-	// Unused on the clipboard (kept so old serialized data does not warn).
+	// Unused (kept so old serialized data does not warn).
 	UPROPERTY()
 	bool bFlipGlassGradient = false;
 
-	// Clipboard colours. All unlit, so they read the same day or night.
+	// Glass faces are engine planes; if the painted sheen / glyphs come out upside down in PIE,
+	// turn this on (spins every face 180 degrees about its normal).
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Style")
-	FLinearColor BoardColor = FLinearColor(0.020f, 0.016f, 0.013f);
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Style")
-	FLinearColor PaperColor = FLinearColor(0.62f, 0.585f, 0.52f);
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Style")
-	FLinearColor InkColor = FLinearColor(0.055f, 0.045f, 0.038f);
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Style")
-	FLinearColor ClipColor = FLinearColor(0.10f, 0.10f, 0.11f);
+	bool bFlipGlassFaces = false;
 
 	// Extra spacing between the letters of the small-caps labels. The title gets double.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Style", meta = (ClampMin = "0.0", UIMax = "6.0"))
@@ -277,18 +302,27 @@ private:
 	// round the wrist turned. Returns false when there is no wrist or view to measure from.
 	float GetWristRollDegrees(bool& bOutValid) const;
 	void RefreshText();
-	// Paints the slab, tiles and rules from Style.
+	// Paints the glass textures and binds them to the board + folder window planes.
 	void RebuildStyleMaterials();
 	void ApplyHoverVisuals();
-	// Rebuilds one tile's transform from its hover blend: a small grow and a lift toward
-	// the viewer.
-	void ApplyTilePop(UStaticMeshComponent* Panel, float HalfY, float Blend) const;
+	// Rebuilds one chip's transform from its hover blend: a small grow and a lift toward
+	// the viewer. RestX is the chip's resting depth.
+	void ApplyTilePop(UStaticMeshComponent* Panel, float RestX, float HalfY, float HalfZ, float Blend) const;
 	FMemoryRoomMenuRow* FindRow(UPrimitiveComponent* Component, bool& bOutIsPlus);
 	void PressRow(FMemoryRoomMenuRow& Row, bool bIsPlus);
+	// Folder window: a separate glass panel in front of the view.
 	void OpenFolderBrowser();
-	void ShowSettingsPage();
-	void RefreshFolderBrowser();
+	void CloseFolderBrowser();
+	void ToggleFolderBrowser();
 	void SetFolderBrowserVisible(bool bVisible);
+	void RefreshFolderBrowser();
+	void PositionFolderWindow();
+	bool PressFolderWindow(UPrimitiveComponent* Hit);
+	bool IsFolderWindowComponent(const UPrimitiveComponent* Component) const;
+	void TickFolderWindow(float DeltaSeconds);
+	void ApplyFolderWindowScale();
+	// Parent of the folder level currently shown (empty = root).
+	FString GetParentOfFolder(const FString& FolderId) const;
 
 	UFUNCTION()
 	void HandleSettingsChanged();
@@ -298,66 +332,64 @@ private:
 	void HandleReloadCompleted(int32 PhotoCount, bool bSuccess);
 
 	UPROPERTY() TObjectPtr<USceneComponent> SceneRoot;
-	// The dark backing board.
+	// The frosted glass board behind the rows (a flat plane so its rounded corners show).
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> BackgroundPanel;
-	// The cream page that sits in front of the board and carries the text.
-	UPROPERTY() TObjectPtr<UStaticMeshComponent> PaperPanel;
-	// The metal clip across the top.
-	UPROPERTY() TObjectPtr<UStaticMeshComponent> ClipPanel;
-	// Printed ink rules: one under the title, one between the settings and the actions.
-	UPROPERTY() TObjectPtr<UStaticMeshComponent> TitleRule;
-	UPROPERTY() TObjectPtr<UStaticMeshComponent> SectionRule;
 	UPROPERTY() TObjectPtr<UTextRenderComponent> TitleText;
 	UPROPERTY() TObjectPtr<UTextRenderComponent> StatusText;
-	// The glass panel is painted emissive so it stays visible at night (see MemoryRoomUIGlass),
-	// but the text render components use the engine's stock font material, which IS lit - so at
-	// night, with almost no scene light reaching the wrist, the labels go dark even though the
-	// glass around them keeps glowing. A small always-on, unshadowed light fixed to the board
-	// keeps the text legible regardless of theme/time of day, without hunting down and swapping
-	// in a replacement font material.
+	// Every glass plane (board, chips, folder window), so a face flip can be applied in one go.
+	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> GlassFaces;
+	// The text render components use the engine's stock font material, which IS lit - so at
+	// night, with almost no scene light reaching the wrist, the labels would go dark even though
+	// the glass is unlit. A small always-on, unshadowed light fixed to the board (and a second
+	// one on the folder window) keeps the text legible regardless of theme/time of day.
 	UPROPERTY() TObjectPtr<UPointLightComponent> BoardLight;
+	UPROPERTY() TObjectPtr<UPointLightComponent> FolderLight;
 
-	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> BoardMaterial;
-	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> PaperMaterial;
-	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> InkMaterial;
-	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> ClipMaterial;
-	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> TileMaterial;
-	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> TileHotMaterial;
-	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> BrowserGlassMaterial;
+	// <= 8 distinct glass textures, painted once per style rebuild.
+	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> BoardGlassMaterial;
+	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> SquareChipMaterial;
+	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> SquareChipHotMaterial;
+	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> WideChipMaterial;
+	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> WideChipHotMaterial;
+	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> FolderWindowMaterial;
+	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> FolderTileMaterial;
+	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> FolderTileHotMaterial;
 
 	UPROPERTY() TArray<FMemoryRoomMenuRow> Rows;
+
+	// --- Folder window ---
+	// Its own root, detached from the board's transform and scale, placed in front of the view.
+	UPROPERTY() TObjectPtr<USceneComponent> FolderRoot;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> BrowserPanel;
-	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserTitle;
 	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserPathText;
-	UPROPERTY() TObjectPtr<UBoxComponent> BrowserBackBox;
-	UPROPERTY() TObjectPtr<UStaticMeshComponent> BrowserBackPanel;
-	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserBackText;
-	UPROPERTY() TObjectPtr<UBoxComponent> BrowserUpBox;
-	UPROPERTY() TObjectPtr<UStaticMeshComponent> BrowserUpPanel;
-	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserUpText;
-	UPROPERTY() TObjectPtr<UBoxComponent> BrowserPrevBox;
-	UPROPERTY() TObjectPtr<UStaticMeshComponent> BrowserPrevPanel;
-	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserPrevText;
-	UPROPERTY() TObjectPtr<UBoxComponent> BrowserNextBox;
-	UPROPERTY() TObjectPtr<UStaticMeshComponent> BrowserNextPanel;
-	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserNextText;
-	UPROPERTY() TObjectPtr<UBoxComponent> BrowserUseBox;
-	UPROPERTY() TObjectPtr<UStaticMeshComponent> BrowserUsePanel;
-	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserUseText;
+	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserHintText;
+	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserPageText;
+	UPROPERTY() TObjectPtr<UTextRenderComponent> BrowserEmptyText;
+	UPROPERTY() FMemoryRoomFolderButton BrowserUp;
+	UPROPERTY() FMemoryRoomFolderButton BrowserClose;
+	UPROPERTY() FMemoryRoomFolderButton BrowserPrev;
+	UPROPERTY() FMemoryRoomFolderButton BrowserNext;
+	UPROPERTY() FMemoryRoomFolderButton BrowserUse;
 	UPROPERTY() TArray<FMemoryRoomFolderTile> FolderTiles;
 	FString BrowserCurrentParentId;
 	FString BrowserPendingSelectionId;
 	int32 BrowserPage = 0;
 	bool bFolderBrowserOpen = false;
+	// 0 hidden, 1 fully open; eased toward bFolderBrowserOpen every tick.
+	float FolderProgress = 0.0f;
+	float BrowserOpenedSeconds = 0.0f;
+	int32 BrowserLastAlbumCount = -1;
+	bool bBrowserPendingShown = false;
+	// Board panel size in cm (before BoardScale), for painting its texture.
+	float BoardPanelWidthCm = 44.0f;
+	float BoardPanelHeightCm = 40.0f;
 	TWeakObjectPtr<UPrimitiveComponent> HoveredComponent;
-	// The palette in effect. Struct defaults are the Hearth look; ApplyUIStyle replaces it.
-	FMemoryRoomWristUIStyle Style;
-	// Printed-ink text colours on the cream page (dark on light).
-	FColor TitleColor = FColor(36, 28, 22);
-	FColor LabelColor = FColor(58, 48, 40);
-	FColor DimLabelColor = FColor(104, 92, 80);
-	FColor ValueColor = FColor(104, 52, 26);
-	FColor HighlightColor = FColor(170, 74, 20);
+	// Fixed warm glass text palette (not themed).
+	FColor TitleColor = FColor(255, 246, 234);
+	FColor LabelColor = FColor(255, 246, 234);
+	FColor DimLabelColor = FColor(160, 154, 146);
+	FColor ValueColor = FColor(255, 222, 168);
+	FColor HighlightColor = FColor(255, 236, 200);
 	// 0 hidden, 1 fully open; eased toward bMenuOpen every tick.
 	float OpenProgress = 0.0f;
 	bool bMenuOpen = false;
