@@ -2182,44 +2182,101 @@ void AMemoryRoomManager::RefreshAlbumList()
 	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [WeakThis, Generation, Root]()
 	{
 		TArray<FMemoryRoomAlbum> Found;
-		FString Folder = Root;
-		FPaths::NormalizeDirectoryName(Folder);
 		IFileManager& FileManager = IFileManager::Get();
 #if !PLATFORM_ANDROID
-		// Same fallback ScanPhotoFolder uses: a missing PhotoFolderPath lists the Pictures subfolders.
-		if (Folder.IsEmpty() || !FileManager.DirectoryExists(*Folder))
+		// VR Preview runs on the PC, so the root level is a set of "places" that exist and hold
+		// photos (the configured folder, Pictures, OneDrive Pictures, Desktop, Downloads,
+		// Documents), each a top-level album with its total count that drills into subfolders.
+		TArray<TPair<FString, FString>> Places; // path, display name
+		auto AddPlace = [&Places, &FileManager](const FString& RawPath, const FString& Label)
 		{
-			Folder = FPaths::Combine(FPlatformProcess::UserDir(), TEXT(".."), TEXT("Pictures"));
-			FPaths::CollapseRelativeDirectories(Folder);
-			FPaths::NormalizeDirectoryName(Folder);
-		}
-		if (!Folder.IsEmpty() && FileManager.DirectoryExists(*Folder))
-		{
-			TFunction<int32(const FString&)> AddFolderTree = [&AddFolderTree, &Found, &FileManager](const FString& ParentPath)
+			FString Path = RawPath;
+			Path.TrimStartAndEndInline();
+			if (Path.IsEmpty()) return;
+			FPaths::CollapseRelativeDirectories(Path);
+			FPaths::NormalizeDirectoryName(Path);
+			if (!FileManager.DirectoryExists(*Path)) return;
+			// De-duplicate by resolved path, ignoring case (Windows).
+			for (const TPair<FString, FString>& Existing : Places)
 			{
-				TArray<FString> SubFolders;
-				FileManager.FindFiles(SubFolders, *FPaths::Combine(ParentPath, TEXT("*")), false, true);
-				SubFolders.Sort([](const FString& L, const FString& R) { return L.Compare(R, ESearchCase::IgnoreCase) < 0; });
-				int32 TotalCount = 0;
-				for (const FString& Sub : SubFolders)
+				if (Existing.Key.Equals(Path, ESearchCase::IgnoreCase)) return;
+			}
+			FString Name = Label.IsEmpty() ? FPaths::GetCleanFilename(Path) : Label;
+			if (Name.IsEmpty()) Name = Path;
+			Places.Emplace(Path, Name);
+		};
+		const FString Profile = FPaths::Combine(FPlatformProcess::UserDir(), TEXT(".."));
+		FString OneDrive = FPlatformMisc::GetEnvironmentVariable(TEXT("OneDrive"));
+		if (OneDrive.IsEmpty()) OneDrive = FPaths::Combine(Profile, TEXT("OneDrive"));
+		AddPlace(Root, FString());
+		AddPlace(FPaths::Combine(Profile, TEXT("Pictures")), TEXT("Pictures"));
+		AddPlace(FPaths::Combine(OneDrive, TEXT("Pictures")), TEXT("OneDrive Pictures"));
+		AddPlace(FPaths::Combine(Profile, TEXT("Desktop")), TEXT("Desktop"));
+		AddPlace(FPaths::Combine(OneDrive, TEXT("Desktop")), TEXT("OneDrive Desktop"));
+		AddPlace(FPaths::Combine(Profile, TEXT("Downloads")), TEXT("Downloads"));
+		AddPlace(FPlatformProcess::UserDir(), TEXT("Documents"));
+		AddPlace(FPaths::Combine(OneDrive, TEXT("Documents")), TEXT("OneDrive Documents"));
+
+		// A place inside another place is already reachable by drilling in; listing it as well
+		// would give two albums the same id.
+		Places.RemoveAll([&Places](const TPair<FString, FString>& Inner)
+		{
+			for (const TPair<FString, FString>& Outer : Places)
+			{
+				if (&Outer != &Inner && Inner.Key.StartsWith(Outer.Key + TEXT("/"), ESearchCase::IgnoreCase)) return true;
+			}
+			return false;
+		});
+
+		// Folders that are never worth walking: hidden (leading dot), app data, tooling, system.
+		auto IsSkippedFolder = [](const FString& Name)
+		{
+			return Name.StartsWith(TEXT(".")) || Name.Equals(TEXT("AppData"), ESearchCase::IgnoreCase)
+				|| Name.Equals(TEXT("node_modules"), ESearchCase::IgnoreCase) || Name.StartsWith(TEXT("$"))
+				|| Name.Equals(TEXT("System Volume Information"), ESearchCase::IgnoreCase);
+		};
+		constexpr int32 AlbumMaxDepth = 6;
+		TFunction<int32(const FString&, int32)> AddFolderTree = [&AddFolderTree, &Found, &FileManager, &IsSkippedFolder](const FString& ParentPath, int32 Depth)
+		{
+			if (Depth >= AlbumMaxDepth) return 0;
+			TArray<FString> SubFolders;
+			FileManager.FindFiles(SubFolders, *FPaths::Combine(ParentPath, TEXT("*")), false, true);
+			SubFolders.Sort([](const FString& L, const FString& R) { return L.Compare(R, ESearchCase::IgnoreCase) < 0; });
+			int32 TotalCount = 0;
+			for (const FString& Sub : SubFolders)
+			{
+				if (IsSkippedFolder(Sub)) continue;
+				FString Path = FPaths::Combine(ParentPath, Sub);
+				FPaths::NormalizeDirectoryName(Path);
+				const int32 Count = CountPhotosInFolder(Path) + AddFolderTree(Path, Depth + 1);
+				if (Count > 0)
 				{
-					FString Path = FPaths::Combine(ParentPath, Sub);
-					FPaths::NormalizeDirectoryName(Path);
-					const int32 Count = CountPhotosInFolder(Path) + AddFolderTree(Path);
-					if (Count > 0)
-					{
-						FMemoryRoomAlbum Album;
-						Album.Id = Path;
-						Album.Name = Sub;
-						Album.ParentId = ParentPath;
-						Album.Count = Count;
-						Found.Add(Album);
-						TotalCount += Count;
-					}
+					FMemoryRoomAlbum Album;
+					Album.Id = Path;
+					Album.Name = Sub;
+					Album.ParentId = ParentPath;
+					Album.Count = Count;
+					Found.Add(Album);
+					TotalCount += Count;
 				}
-				return TotalCount;
-			};
-			AddFolderTree(Folder);
+			}
+			return TotalCount;
+		};
+
+		for (const TPair<FString, FString>& Place : Places)
+		{
+			// Subfolders first (they are added to Found as the tree is walked), then the place
+			// itself ahead of them, so a parent always precedes its children.
+			const int32 PlaceIndex = Found.Num();
+			const int32 Count = CountPhotosInFolder(Place.Key) + AddFolderTree(Place.Key, 1);
+			if (Count > 0)
+			{
+				FMemoryRoomAlbum Album;
+				Album.Id = Place.Key;
+				Album.Name = Place.Value;
+				Album.Count = Count; // ParentId stays empty: a top-level place
+				Found.Insert(Album, PlaceIndex);
+			}
 		}
 #endif
 		AsyncTask(ENamedThreads::GameThread, [WeakThis, Generation, Found = MoveTemp(Found)]() mutable

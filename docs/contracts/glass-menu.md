@@ -29,7 +29,7 @@ User decision 2026-10-15: drop the current (clipboard / Hearth-derived) menu loo
 - Long names truncate with "…"; tiles never overlap.
 
 ## Perf budget
-- Textures painted once (on build / style change), not per frame. ≤ 8 distinct glass textures, each ≤ 256×256. No new per-frame allocations. Keep 72 fps on Quest.
+- Textures painted once (on build / style change), not per frame. Rev 2: 11 frosted glass textures (each <= 256 px on the long side) plus 9 painted icon textures (64 x 64, shared by every plane that shows the shape). No new per-frame allocations. Keep 72 fps on Quest.
 
 ## Out of scope
 - Wrist pucks and the photo hover halo keep their current look (later pass if the user wants).
@@ -39,3 +39,25 @@ User decision 2026-10-15: drop the current (clipboard / Hearth-derived) menu loo
 ## Done-check
 - `MemoryRoomEditor Win64 Development` builds with unity ON, no new warnings.
 - In PIE: board shows glass chips; Choose folder opens a separate window; Up / enter / page / Use / × work; choice persists after restart.
+
+## Layout (rev 2, 2026-10-15 — matches the approved mockup; supersedes the first build)
+Units: cm in the board's local plane. Text sentence case everywhere (no ALL CAPS).
+- **Board** (left): ~34 W, height fits content. Title "Memory room" (size ~3.6), subtitle "Photos: <current folder name>" (size ~2.2, 60% text). Then ONE column of full-width chips (~28 W × 6.5 H, 1.2 gap): Reset view, Jump to newest, Reload photos, Choose folder, Close — plus any settings rows (Particles etc.) in the same single column. Each chip: icon at left (painted into the texture, not a font glyph), label left-aligned after it, size ~2.4.
+- **Folder window** (right): sits beside the board in the SAME plane, right of the board with a ~4 gap, top edges aligned, same scale. Optional slight inward yaw ≤ 12° toward the user. No separate far placement. ~62 W × 46 H.
+  - Top bar: [↑ Up] chip (~9 × 4.5) at left, breadcrumb "Pictures › Trips › 2024" after it (size ~2.0, 75% text, middle-truncate if long), [×] chip (~4.5 × 4.5) at right.
+  - Grid: 3 columns × 2 rows per page, tiles ~18 W × 13 H, 1.6 gap. Each tile: folder glyph (top), name (size ~2.0, truncate "…"), "N photos" (size ~1.5, 60% text).
+  - Bottom bar: "‹ 1 / 3 ›" page control at left (prev/next arrows are their own hit boxes), primary "✓ Use this folder" amber chip (~18 × 5) at right.
+- Icons (Up arrow, ×, ‹ ›, ✓, folder, and the board row icons: reset, clock, refresh, folder, x) are painted shapes in the chip textures — the TextRender font may lack these glyphs.
+- Highlight stays warm amber (user choice), not the mockup's blue.
+
+## Desktop / PIE folder source (rev 2)
+VR Preview runs on the PC, so there are no headset folders there; the PC path should feel like a gallery:
+- Root level lists "places" that exist and contain photos: PhotoFolderPath (if set), Pictures, OneDrive\Pictures, Desktop, Downloads, Documents — de-duplicated by resolved path. Each place is a top-level album (ParentId empty) showing total count, drillable into subfolders.
+- A folder with loose photos AND subfolders is still selectable ("Use this folder" uses that folder's own photos + descendants, as today).
+- Folders with zero photos in their subtree stay hidden. Scan off the game thread (as now); cap depth at 6 and skip hidden/system folders (names starting with "." , AppData, node_modules).
+- Android path (MediaStore buckets) unchanged.
+
+## Build notes (rev 2 implementation)
+- Settings (Spiral twist, Dust, ...) stay a compact two-per-line [<] value [>] block under the single column of action chips: eleven more full-width rows would make the board over a metre tall. The "Photos" album-cycling setting is off the board (Choose folder + the subtitle replace it).
+- The folder window is a child of the board root (same plane, scale and open animation). While it is open the board slides left by half the pair offset so the pair is centred in view. Tunables: FolderWindowGapCm (4), FolderWindowInwardYawDegrees (8, max 12).
+- On the PC the "All photos" tile is not offered (it only ever scanned the Pictures folder).
