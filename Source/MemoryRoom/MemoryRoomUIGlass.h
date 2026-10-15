@@ -69,6 +69,25 @@ namespace MemoryRoomUI
 	MEMORYROOM_API UMaterialInterface* LoadGlassTranslucentMaterial();
 
 	MEMORYROOM_API UTexture2D* MakeFrostedPanelTexture(const FGlassPanelSpec& Spec, int32 MaxSide = 256);
+
+	// --- Painted icons ---
+	// Small shapes drawn from signed-distance functions into a transparent RGBA texture, so the
+	// menu never depends on the TextRender font having an arrow / tick / folder glyph. Each icon
+	// is painted once (Size x Size, square) in a single colour; the chip behind it supplies the
+	// glass. Put it on a flat plane with MakeTranslucentMaterial.
+	enum class EGlassIcon : uint8
+	{
+		Up,      // arrow pointing up (parent folder)
+		Close,   // x
+		Prev,    // single chevron, left
+		Next,    // single chevron, right
+		Check,   // tick
+		Reset,   // one counter-clockwise arrow circle
+		Clock,   // ring with two hands
+		Refresh, // two clockwise arrows chasing round a circle
+		Folder   // folder with tab
+	};
+	MEMORYROOM_API UTexture2D* MakeIconTexture(EGlassIcon Icon, const FLinearColor& Color, int32 Size = 64);
 	// Dynamic instance of the translucent base with Texture bound to "SlateUI".
 	MEMORYROOM_API UMaterialInstanceDynamic* MakeTranslucentMaterial(UMaterialInterface* Base, UTexture2D* Texture, UObject* Outer);
 }
