@@ -27,17 +27,19 @@ enum class EMemoryRoomMenuAction : uint8
 
 // One row on the settings board.
 //
-// Setting rows (compact, two to a line):
-//        Photo spacing        <- Label
-//     [ < ]   12   [ > ]      <- MinusBox / ValueText / PlusBox
+// Setting rows (one slim full-width row on a settings tab):
+//   Photo spacing                 [ < ]   12   [ > ]
+//   <- Label (left)               MinusBox / ValueText / PlusBox (right, painted arrows)
 //
-// Action rows are one full-width chip (the Minus box) with a painted Icon at its left and
-// the Label after it, left-aligned. No Plus box or value.
+// Action rows (Home tab) are one full-width chip (the Minus box) with a painted Icon at its
+// left and the Label after it, left-aligned. No Plus box or value.
 USTRUCT()
 struct FMemoryRoomMenuRow
 {
 	GENERATED_BODY()
 
+	// Which tab shows this row: 0 Home, 1 Gallery, 2 Atmosphere, 3 Comfort.
+	int32 Tab = 0;
 	bool bIsSetting = false;
 	EMemoryRoomUserSetting Setting = EMemoryRoomUserSetting::TimeOfDay;
 	EMemoryRoomMenuAction Action = EMemoryRoomMenuAction::Close;
@@ -46,8 +48,10 @@ struct FMemoryRoomMenuRow
 	UPROPERTY() TObjectPtr<UBoxComponent> PlusBox;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> MinusPanel;
 	UPROPERTY() TObjectPtr<UStaticMeshComponent> PlusPanel;
-	UPROPERTY() TObjectPtr<UTextRenderComponent> MinusGlyph;
-	UPROPERTY() TObjectPtr<UTextRenderComponent> PlusGlyph;
+	// Setting rows: the slim full-width background, and the painted < > arrows on the two chips.
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> RowPanel;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> MinusIcon;
+	UPROPERTY() TObjectPtr<UStaticMeshComponent> PlusIcon;
 	UPROPERTY() TObjectPtr<UTextRenderComponent> Label;
 	UPROPERTY() TObjectPtr<UTextRenderComponent> ValueText;
 	// Painted icon plane on action chips (null on setting rows).
@@ -150,19 +154,22 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu")
 	TObjectPtr<AMemoryRoomManager> MemoryRoomManager;
 
-	// --- Clipboard placement ---
-	// The clipboard is summoned by the wrist Settings puck - it is NOT always in view. On
-	// open it appears this far in front of the head, at VerticalOffsetCm below eye level,
-	// turned to face you. Press the puck again (or the Close button) to dismiss it.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Placement", meta = (ClampMin = "40.0"))
-	float SummonDistanceCm = 75.0f;
+	// --- Board placement (rev 3) ---
+	// The board is summoned by the wrist Settings puck - it is NOT always in view. On open it
+	// appears BoardDistanceCm ahead of the head with its vertical CENTRE BoardCentreBelowEyeCm
+	// below eye level (so placement never depends on the board's height; if the board is tall
+	// enough that its top edge would reach eye level, it is lowered to keep the top below the
+	// eye), tilted back by BoardTiltDegrees so it faces the head. Press the puck again (or the
+	// Close chip) to dismiss it.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Placement", meta = (ClampMin = "30.0"))
+	float BoardDistanceCm = 65.0f;
 
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Placement")
-	float SummonHeightOffsetCm = -22.0f;
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Placement", meta = (ClampMin = "0.0"))
+	float BoardCentreBelowEyeCm = 28.0f;
 
-	// Tilt the top of the board back a little, like a lectern.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Placement", meta = (ClampMin = "-30.0", ClampMax = "30.0"))
-	float MenuPitchDegrees = 6.0f;
+	// Pitch that leans the face back toward the head (the board is below eye level).
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Menu|Placement", meta = (ClampMin = "0.0", ClampMax = "45.0"))
+	float BoardTiltDegrees = 20.0f;
 
 	// Float the board a fixed distance in front of the view once revealed, instead of riding
 	// the wrist. The wrist-roll gesture below is unaffected either way - it only reads
@@ -296,6 +303,8 @@ private:
 	// Places the clipboard a fixed distance in front of the head, facing the viewer.
 	void PositionMenuInFrontOfView();
 	void ApplyBoardScale();
+	// Shows only the active tab's rows (and enables only their collision).
+	void ApplyActiveTab();
 	void BindInput();
 	void ResolveManager();
 	bool AttachToLeftController();
@@ -371,7 +380,13 @@ private:
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> FolderTileMaterial;
 	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> FolderTileHotMaterial;
 
+	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> TabChipMaterial;
+	UPROPERTY(Transient) TObjectPtr<UMaterialInstanceDynamic> TabChipHotMaterial;
+
 	UPROPERTY() TArray<FMemoryRoomMenuRow> Rows;
+	// Home / Gallery / Atmosphere / Comfort strip under the subtitle.
+	UPROPERTY() TArray<FMemoryRoomFolderButton> TabButtons;
+	int32 ActiveTab = 0;
 
 	// --- Folder window ---
 	// Its own root, a child of the board's root: it shares the board's pose, scale and open
@@ -409,7 +424,7 @@ private:
 	// Fixed warm glass text palette (not themed).
 	FColor TitleColor = FColor(255, 246, 234);
 	FColor LabelColor = FColor(255, 246, 234);
-	FColor DimLabelColor = FColor(160, 154, 146);
+	FColor DimLabelColor = FColor(179, 172, 164); // ~70% of the title colour
 	FColor ValueColor = FColor(255, 222, 168);
 	FColor HighlightColor = FColor(255, 236, 200);
 	// 0 hidden, 1 fully open; eased toward bMenuOpen every tick.

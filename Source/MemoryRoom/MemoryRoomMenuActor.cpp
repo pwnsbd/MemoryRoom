@@ -27,36 +27,39 @@ namespace
 // targets, not between labels. Anything new is named GlassMenu_ so file-local constants do not
 // clash in a unity build.
 constexpr float PressHalfX = 1.2f;          // press-box depth, toward the viewer
-constexpr float PressHalfY = 2.0f;          // 4 cm square press targets (setting arrows)
-constexpr float PressHalfZ = 2.0f;
-constexpr float StepOffsetY = 4.75f;        // minus and plus, either side of the value
-constexpr float ColumnPitchY = 15.0f;       // two setting tiles side by side
-constexpr float SettingRowPitchZ = 9.0f;
-constexpr float LabelOffsetZ = 4.3f;        // the setting name sits above its own buttons
-constexpr float PanelMargin = 3.0f;
+constexpr float PanelMargin = 2.5f;
 constexpr float PanelDepthX = -0.6f;        // glass board plane; its face looks toward -X
 constexpr float WidgetDepthX = -1.6f;       // chips float just in front of the board
 constexpr float TextDepthX = WidgetDepthX - 0.9f;
 constexpr float TilePopLiftX = 0.6f;        // a hot tile comes this much closer
-constexpr float LabelSize = 1.9f;
+constexpr float LabelSize = 2.0f;
 constexpr float ValueSize = 2.2f;
-constexpr float GlyphSize = 2.8f;
 constexpr float ActionSize = 2.4f;
 constexpr float TitleSize = 3.6f;
 constexpr float StatusSize = 2.0f;
-constexpr int32 SettingColumns = 2;
 
-// Board chips and header.
-constexpr float GlassMenu_ChipW = 28.0f;
-constexpr float GlassMenu_ChipH = 6.5f;
-constexpr float GlassMenu_ChipGap = 1.2f;
-constexpr float GlassMenu_ChipIconY = -10.4f;     // icon centre, from the chip centre
-constexpr float GlassMenu_ChipIconSize = 3.6f;
-constexpr float GlassMenu_ChipLabelY = -7.4f;     // left edge of the label, from the chip centre
+// Board chips and header (rev 3: tabbed board, one column of full-width rows).
+constexpr float GlassMenu_ChipW = 36.0f;
+constexpr float GlassMenu_ChipH = 5.4f;
+constexpr float GlassMenu_ChipGap = 0.9f;
+constexpr float GlassMenu_ChipIconY = -14.2f;     // icon centre, from the chip centre
+constexpr float GlassMenu_ChipIconSize = 3.4f;
+constexpr float GlassMenu_ChipLabelY = -11.4f;    // left edge of the label, from the chip centre
 constexpr float GlassMenu_SubtitleSize = 2.2f;
-constexpr float GlassMenu_ChipsToSettingsZ = 3.5f;
-constexpr float GlassMenu_SettingFirstRowZ = 6.0f;
 constexpr float GlassMenu_IconDepthX = WidgetDepthX - 0.4f;
+// Tab strip (Home / Gallery / Atmosphere / Comfort). Widths follow label length.
+constexpr int32 GlassMenu_TabCount = 4;
+constexpr float GlassMenu_TabH = 4.6f;
+constexpr float GlassMenu_TabGap = 0.5f;
+constexpr float GlassMenu_TabTextSize = 1.7f;
+// Setting rows: label left, "< value >" right; the arrows are their own press targets.
+constexpr float GlassMenu_SettingLabelY = -16.7f; // left edge of the name, from the row centre
+constexpr float GlassMenu_ArrowMinusY = 3.5f;
+constexpr float GlassMenu_ValueY = 9.5f;
+constexpr float GlassMenu_ArrowPlusY = 15.5f;
+constexpr float GlassMenu_ArrowHalfY = 2.0f;
+constexpr float GlassMenu_ArrowHalfZ = 2.2f;
+constexpr float GlassMenu_ArrowIconSize = 2.8f;
 
 // Folder window layout, in cm, in the window's own frame (content on -X, +Y to the viewer's
 // right, +Z up, origin at the window centre).
@@ -168,43 +171,47 @@ void AMemoryRoomMenuActor::BuildBoard()
 
 	// The Photos (album cycling) setting is not on the board: "Choose folder" and the folder
 	// window replace it, and the current folder is the subtitle.
-	TArray<EMemoryRoomUserSetting> ShownSettings;
-	for (int32 i = 0; i < static_cast<int32>(EMemoryRoomUserSetting::Count); ++i)
+	// Rev 3: the settings live on tabs. Home holds the action chips; each other tab lists its
+	// settings as slim rows. (Tab 0 is Home; settings tabs are 1..3 in the order below.)
+	struct FTabDef { const TCHAR* Name; float Weight; };
+	const FTabDef Tabs[GlassMenu_TabCount] = {
+		{ TEXT("Home"), 6.0f }, { TEXT("Gallery"), 9.0f }, { TEXT("Atmosphere"), 12.0f }, { TEXT("Comfort"), 9.0f } };
+	using EUS = EMemoryRoomUserSetting;
+	const TArray<EUS> TabSettings[GlassMenu_TabCount] = {
+		{},
+		{ EUS::SpiralTwist, EUS::PhotoSpacing, EUS::PhotosInView, EUS::ScrollSpeed },
+		{ EUS::TimeOfDay, EUS::NightPhotoGlow, EUS::Theme, EUS::DustAmount },
+		{ EUS::Float, EUS::ThumbnailQuality } };
+	// Board height is fixed to the tallest tab so it does not jump when switching.
+	int32 TallestTabRows = ActionCount;
+	for (const TArray<EUS>& TabList : TabSettings)
 	{
-		if (static_cast<EMemoryRoomUserSetting>(i) != EMemoryRoomUserSetting::PhotoAlbum)
-		{
-			ShownSettings.Add(static_cast<EMemoryRoomUserSetting>(i));
-		}
+		TallestTabRows = FMath::Max(TallestTabRows, TabList.Num());
 	}
-	const int32 SettingRows = FMath::DivideAndRoundUp(ShownSettings.Num(), SettingColumns);
 
 	// Lay the panel out top-down with the content top at Z = 0, measure what that comes to, then
-	// shift the lot so the actor's own origin sits at the BOTTOM of the finished panel, not
-	// its centre. TickFacePlayer keeps this actor's Z axis pointing world-up (Roll stays 0),
-	// so with the origin at the base the panel grows upward from wherever it is attached -
-	// the controller - instead of straddling it top and bottom.
+	// shift the lot so the actor's own origin sits at the vertical CENTRE of the finished board.
+	// Placement (PositionMenuInFrontOfView) anchors on that centre, so it does not depend on how
+	// tall the board is.
 	const float TitleZ = -TitleSize * 0.6f;
 	const float SubtitleZ = TitleZ - TitleSize * 0.5f - 0.4f - GlassMenu_SubtitleSize * 0.5f;
-	const float ChipsTopZ = SubtitleZ - GlassMenu_SubtitleSize * 0.5f - 2.4f;
-	const float ChipsBottomZ = ChipsTopZ - ActionCount * GlassMenu_ChipH - (ActionCount - 1) * GlassMenu_ChipGap;
-	const float SettingsTopZ = ChipsBottomZ - GlassMenu_ChipsToSettingsZ;
-	const float SettingsBottomZ = SettingsTopZ - GlassMenu_SettingFirstRowZ - (SettingRows - 1) * SettingRowPitchZ - PressHalfZ;
-	const float StatusZ = SettingsBottomZ - 1.0f - StatusSize * 0.5f;
+	const float TabsTopZ = SubtitleZ - GlassMenu_SubtitleSize * 0.5f - 1.6f;
+	const float TabsCenterZ = TabsTopZ - GlassMenu_TabH * 0.5f;
+	const float ChipsTopZ = TabsTopZ - GlassMenu_TabH - 1.6f;
+	const float ChipsBottomZ = ChipsTopZ - TallestTabRows * GlassMenu_ChipH - (TallestTabRows - 1) * GlassMenu_ChipGap;
+	const float StatusZ = ChipsBottomZ - 1.2f - StatusSize * 0.5f;
 	const float ContentTopZ = 0.0f;
 	const float ContentBottomZ = StatusZ - StatusSize * 0.5f;
-	const float BaseAnchorShiftZ = -(ContentBottomZ - PanelMargin);
+	const float BaseAnchorShiftZ = -(ContentTopZ + ContentBottomZ) * 0.5f;
 
 	const float PanelWidth = GlassMenu_ChipW + 2.0f * PanelMargin;
 	const float PanelHeight = (ContentTopZ - ContentBottomZ) + 2.0f * PanelMargin;
 	BoardPanelWidthCm = PanelWidth;
 	BoardPanelHeightCm = PanelHeight;
 	BoardTopLocalZCm = ContentTopZ + PanelMargin + BaseAnchorShiftZ;
-
-	// Column 0 is the viewer's left: the widgets carry a 180-degree yaw to face the player,
-	// which makes +Y the reading direction and so the viewer's right.
-	auto ColumnY = [](int32 Column, int32 ColumnCount)
+	auto RowZ = [&](int32 Index)
 	{
-		return (Column - (ColumnCount - 1) * 0.5f) * ColumnPitchY;
+		return ChipsTopZ - GlassMenu_ChipH * 0.5f - Index * (GlassMenu_ChipH + GlassMenu_ChipGap) + BaseAnchorShiftZ;
 	};
 
 	// A flat glass face. The engine plane lies in XY with its normal +Z; pitching it 90 degrees
@@ -292,15 +299,39 @@ void AMemoryRoomMenuActor::BuildBoard()
 	StatusText = MakeText(TEXT("StatusText"), 0.0f, StatusZ + BaseAnchorShiftZ, StatusSize, 0.0f);
 	StatusText->SetTextRenderColor(DimLabelColor);
 
-	// One column of full-width action chips: icon at the left, label left-aligned after it.
+	// Tab strip under the subtitle. Equal-height chips, widths weighted by label length.
+	{
+		float WeightSum = 0.0f;
+		for (const FTabDef& Tab : Tabs) WeightSum += Tab.Weight;
+		const float Usable = GlassMenu_ChipW - (GlassMenu_TabCount - 1) * GlassMenu_TabGap;
+		float LeftY = -GlassMenu_ChipW * 0.5f;
+		for (int32 i = 0; i < GlassMenu_TabCount; ++i)
+		{
+			const float Width = Usable * Tabs[i].Weight / WeightSum;
+			const float CenterY = LeftY + Width * 0.5f;
+			const FString Tag = FString::Printf(TEXT("Tab%d"), i);
+			FMemoryRoomFolderButton Tab;
+			Tab.HalfY = Width * 0.5f;
+			Tab.HalfZ = GlassMenu_TabH * 0.5f;
+			Tab.Box = MakeBox(Tag + TEXT("Press"), CenterY, TabsCenterZ + BaseAnchorShiftZ, Tab.HalfY, Tab.HalfZ);
+			Tab.Panel = MakePanel(Tag + TEXT("P"), CenterY, TabsCenterZ + BaseAnchorShiftZ, Tab.HalfY, Tab.HalfZ);
+			Tab.Label = MakeText(Tag + TEXT("Label"), CenterY, TabsCenterZ + BaseAnchorShiftZ, GlassMenu_TabTextSize, 0.0f);
+			Tab.Label->SetText(FText::FromString(Tabs[i].Name));
+			TabButtons.Add(Tab);
+			LeftY += Width + GlassMenu_TabGap;
+		}
+	}
+
+	// Home tab: one column of full-width action chips, icon at the left, label after it.
 	for (int32 i = 0; i < ActionCount; ++i)
 	{
-		const float ChipZ = ChipsTopZ - GlassMenu_ChipH * 0.5f - i * (GlassMenu_ChipH + GlassMenu_ChipGap) + BaseAnchorShiftZ;
+		const float ChipZ = RowZ(i);
 		const FString Tag = FString::Printf(TEXT("Act%d"), i);
 		const float HalfY = GlassMenu_ChipW * 0.5f;
 		const float HalfZ = GlassMenu_ChipH * 0.5f;
 
 		FMemoryRoomMenuRow Row;
+		Row.Tab = 0;
 		Row.bIsSetting = false;
 		Row.Action = Actions[i].Action;
 		Row.IconKind = Actions[i].Icon;
@@ -314,32 +345,36 @@ void AMemoryRoomMenuActor::BuildBoard()
 		Rows.Add(Row);
 	}
 
-	// Compact settings below, two to a line.
-	for (int32 i = 0; i < ShownSettings.Num(); ++i)
+	// Settings tabs: one slim full-width row per setting. Name at the left, "< value >" at the
+	// right with the arrows painted and each its own press target.
+	int32 SettingTag = 0;
+	for (int32 TabIndex = 1; TabIndex < GlassMenu_TabCount; ++TabIndex)
 	{
-		const float TileY = ColumnY(i % SettingColumns, SettingColumns);
-		const float TileZ = SettingsTopZ - GlassMenu_SettingFirstRowZ - (i / SettingColumns) * SettingRowPitchZ + BaseAnchorShiftZ;
-		const FString Tag = FString::Printf(TEXT("Set%d"), i);
+		for (int32 i = 0; i < TabSettings[TabIndex].Num(); ++i, ++SettingTag)
+		{
+			const float RowCenterZ = RowZ(i);
+			const FString Tag = FString::Printf(TEXT("Set%d"), SettingTag);
 
-		FMemoryRoomMenuRow Row;
-		Row.bIsSetting = true;
-		Row.Setting = ShownSettings[i];
-		Row.TileHalfY = PressHalfY;
-		Row.TileHalfZ = PressHalfZ;
-		Row.MinusBox = MakeBox(Tag + TEXT("Minus"), TileY - StepOffsetY, TileZ, PressHalfY, PressHalfZ);
-		Row.PlusBox = MakeBox(Tag + TEXT("Plus"), TileY + StepOffsetY, TileZ, PressHalfY, PressHalfZ);
-		Row.MinusPanel = MakePanel(Tag + TEXT("MinusP"), TileY - StepOffsetY, TileZ, PressHalfY, PressHalfZ);
-		Row.PlusPanel = MakePanel(Tag + TEXT("PlusP"), TileY + StepOffsetY, TileZ, PressHalfY, PressHalfZ);
-		Row.MinusGlyph = MakeText(Tag + TEXT("MinusG"), TileY - StepOffsetY, TileZ, GlyphSize, 0.0f);
-		Row.MinusGlyph->SetText(FText::FromString(TEXT("<")));
-		Row.PlusGlyph = MakeText(Tag + TEXT("PlusG"), TileY + StepOffsetY, TileZ, GlyphSize, 0.0f);
-		Row.PlusGlyph->SetText(FText::FromString(TEXT(">")));
-		Row.Label = MakeText(Tag + TEXT("Label"), TileY, TileZ + LabelOffsetZ, LabelSize, 0.0f);
-		// The value sits in the clear space between the two arrows, so the arrow you want is
-		// always the one on the side of the number you are reading.
-		Row.ValueText = MakeText(Tag + TEXT("Value"), TileY, TileZ, ValueSize, 0.0f);
-		Rows.Add(Row);
+			FMemoryRoomMenuRow Row;
+			Row.Tab = TabIndex;
+			Row.bIsSetting = true;
+			Row.Setting = TabSettings[TabIndex][i];
+			Row.TileHalfY = GlassMenu_ArrowHalfY;
+			Row.TileHalfZ = GlassMenu_ArrowHalfZ;
+			Row.RowPanel = MakeFace(Tag + TEXT("RowP"), SceneRoot, FVector(WidgetDepthX, 0.0f, RowCenterZ), GlassMenu_ChipW, GlassMenu_ChipH, 1);
+			Row.MinusBox = MakeBox(Tag + TEXT("Minus"), GlassMenu_ArrowMinusY, RowCenterZ, GlassMenu_ArrowHalfY, GlassMenu_ArrowHalfZ);
+			Row.PlusBox = MakeBox(Tag + TEXT("Plus"), GlassMenu_ArrowPlusY, RowCenterZ, GlassMenu_ArrowHalfY, GlassMenu_ArrowHalfZ);
+			Row.MinusPanel = MakePanel(Tag + TEXT("MinusP"), GlassMenu_ArrowMinusY, RowCenterZ, GlassMenu_ArrowHalfY, GlassMenu_ArrowHalfZ);
+			Row.PlusPanel = MakePanel(Tag + TEXT("PlusP"), GlassMenu_ArrowPlusY, RowCenterZ, GlassMenu_ArrowHalfY, GlassMenu_ArrowHalfZ);
+			Row.MinusIcon = MakeFace(Tag + TEXT("MinusI"), SceneRoot, FVector(GlassMenu_IconDepthX, GlassMenu_ArrowMinusY, RowCenterZ), GlassMenu_ArrowIconSize, GlassMenu_ArrowIconSize, 12);
+			Row.PlusIcon = MakeFace(Tag + TEXT("PlusI"), SceneRoot, FVector(GlassMenu_IconDepthX, GlassMenu_ArrowPlusY, RowCenterZ), GlassMenu_ArrowIconSize, GlassMenu_ArrowIconSize, 12);
+			Row.Label = MakeText(Tag + TEXT("Label"), GlassMenu_SettingLabelY, RowCenterZ, LabelSize, 0.0f);
+			Row.Label->SetHorizontalAlignment(EHTA_Left);
+			Row.ValueText = MakeText(Tag + TEXT("Value"), GlassMenu_ValueY, RowCenterZ, ValueSize, 0.0f);
+			Rows.Add(Row);
+		}
 	}
+	ApplyActiveTab();
 
 	// --- Folder window ---
 	// A child of the board root, so it shares the board's pose, scale and open animation. It
@@ -440,6 +475,47 @@ void AMemoryRoomMenuActor::BuildBoard()
 	SetFolderBrowserVisible(false);
 }
 
+void AMemoryRoomMenuActor::ApplyActiveTab()
+{
+	// Only the active tab's rows are visible and pressable; the other tabs' rows have collision
+	// off so the pointer can never hit something that is not drawn.
+	auto SetBox = [](UBoxComponent* Box, bool bOn)
+	{
+		if (Box) Box->SetCollisionEnabled(bOn ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+	};
+	auto SetShown = [](USceneComponent* Component, bool bOn)
+	{
+		if (Component) Component->SetVisibility(bOn);
+	};
+	for (FMemoryRoomMenuRow& Row : Rows)
+	{
+		const bool bOn = Row.Tab == ActiveTab;
+		SetBox(Row.MinusBox, bOn);
+		SetBox(Row.PlusBox, bOn);
+		SetShown(Row.MinusPanel, bOn);
+		SetShown(Row.PlusPanel, bOn);
+		SetShown(Row.RowPanel, bOn);
+		SetShown(Row.MinusIcon, bOn);
+		SetShown(Row.PlusIcon, bOn);
+		SetShown(Row.Icon, bOn);
+		SetShown(Row.Label, bOn);
+		SetShown(Row.ValueText, bOn);
+	}
+	const UPrimitiveComponent* Hovered = HoveredComponent.Get();
+	if (Hovered)
+	{
+		for (const FMemoryRoomMenuRow& Row : Rows)
+		{
+			if (Row.Tab != ActiveTab && (Row.MinusBox == Hovered || Row.PlusBox == Hovered))
+			{
+				HoveredComponent.Reset();
+				break;
+			}
+		}
+	}
+	ApplyHoverVisuals();
+}
+
 void AMemoryRoomMenuActor::ApplyBoardScale()
 {
 	if (SceneRoot)
@@ -508,7 +584,14 @@ void AMemoryRoomMenuActor::PositionMenuInFrontOfView()
 		Forward = FVector::ForwardVector;
 	}
 
-	FVector Location = ViewLocation + Forward * FMath::Max(SummonDistanceCm, 30.0f) + FVector(0.0f, 0.0f, SummonHeightOffsetCm);
+	// The actor origin is the board's vertical centre (BuildBoard), so the placement does not
+	// depend on how tall the board is. Rev 3: sit below eye level, then make sure the top edge
+	// is below the eye whatever the height: half the board's height, foreshortened by the tilt,
+	// plus a small margin.
+	const float BoardScaleNow = FMath::Max(BoardScale, 0.05f);
+	const float TopEdgeBelowEyeCm = BoardPanelHeightCm * 0.5f * BoardScaleNow * FMath::Cos(FMath::DegreesToRadians(BoardTiltDegrees)) + 3.0f;
+	const float CentreBelowEyeCm = FMath::Max(BoardCentreBelowEyeCm, TopEdgeBelowEyeCm);
+	FVector Location = ViewLocation + Forward * FMath::Max(BoardDistanceCm, 30.0f) - FVector(0.0f, 0.0f, CentreBelowEyeCm);
 
 	// The folder window hangs off the board's right edge, so while it is open the board slides
 	// left by the pair's off-centre amount and the two sit centred in the view; it comes back to
@@ -516,13 +599,14 @@ void AMemoryRoomMenuActor::PositionMenuInFrontOfView()
 	if (bFolderBrowserOpen)
 	{
 		const FVector Right = FVector::CrossProduct(FVector::UpVector, Forward);
-		Location -= Right * (FolderPairCenterYCm * FMath::Max(BoardScale, 0.05f));
+		Location -= Right * (FolderPairCenterYCm * BoardScaleNow);
 	}
 
 	// The board's content is on its -X face (see BuildBoard), so +X must point away from the
 	// viewer - i.e. along Forward.
 	FRotator Rotation = Forward.Rotation();
-	Rotation.Pitch = -MenuPitchDegrees;
+	// Negative pitch dips +X, so the -X (content) face looks up and back toward the head.
+	Rotation.Pitch = -BoardTiltDegrees;
 	Rotation.Roll = 0.0f;
 	SetActorLocationAndRotation(Location, Rotation);
 }
@@ -833,6 +917,13 @@ void AMemoryRoomMenuActor::TickHoverAnimation(float DeltaSeconds)
 		return true;
 	};
 
+	for (FMemoryRoomFolderButton& Tab : TabButtons)
+	{
+		if (Settle(Tab.HoverBlend, Hovered == Tab.Box))
+		{
+			ApplyTilePop(Tab.Panel, WidgetDepthX, Tab.HalfY, Tab.HalfZ, Tab.HoverBlend);
+		}
+	}
 	for (FMemoryRoomMenuRow& Row : Rows)
 	{
 		if (Settle(Row.MinusHoverBlend, Hovered == Row.MinusBox))
@@ -933,8 +1024,11 @@ void AMemoryRoomMenuActor::OpenMenu()
 	SetActorEnableCollision(true);
 	SetOtherWristButtonsHidden(true);
 	ApplyBoardScale();
+	// The menu always opens on Home. The folder window is never opened here: only the Choose
+	// folder chip opens it (first run just highlights that chip, see ApplyHoverVisuals).
+	ActiveTab = 0;
+	ApplyActiveTab();
 	RefreshText();
-	if (MemoryRoomManager && !MemoryRoomManager->HasPhotoSourceChoice()) OpenFolderBrowser();
 }
 
 void AMemoryRoomMenuActor::CloseMenu()
@@ -988,9 +1082,13 @@ bool AMemoryRoomMenuActor::IsMenuComponent(const UPrimitiveComponent* Component)
 	// The folder window is a separate panel; the board stays live beside it.
 	if (bFolderBrowserOpen && IsFolderWindowComponent(Component)) return true;
 	if (Component == BackgroundPanel) return true;
+	for (const FMemoryRoomFolderButton& Tab : TabButtons)
+	{
+		if (Tab.Box == Component) return true;
+	}
 	for (const FMemoryRoomMenuRow& Row : Rows)
 	{
-		if (Row.MinusBox == Component || Row.PlusBox == Component) return true;
+		if (Row.Tab == ActiveTab && (Row.MinusBox == Component || Row.PlusBox == Component)) return true;
 	}
 	return false;
 }
@@ -1017,7 +1115,18 @@ bool AMemoryRoomMenuActor::PressHoveredButton()
 	bool bIsPlus = false;
 	bool bPressed = false;
 	FMemoryRoomMenuRow* Row = nullptr;
-	if (bFolderBrowserOpen && IsFolderWindowComponent(HoveredComponent.Get()))
+	int32 TabHit = INDEX_NONE;
+	for (int32 i = 0; i < TabButtons.Num(); ++i)
+	{
+		if (TabButtons[i].Box && TabButtons[i].Box == HoveredComponent.Get()) TabHit = i;
+	}
+	if (TabHit != INDEX_NONE)
+	{
+		ActiveTab = TabHit;
+		ApplyActiveTab();
+		bPressed = true;
+	}
+	else if (bFolderBrowserOpen && IsFolderWindowComponent(HoveredComponent.Get()))
 	{
 		bPressed = PressFolderWindow(HoveredComponent.Get());
 	}
@@ -1423,7 +1532,9 @@ void AMemoryRoomMenuActor::RefreshText()
 				if (FolderName.IsEmpty()) FolderName = SelectedId;
 			}
 		}
-		SubtitleText->SetText(FText::FromString(FString(TEXT("Photos: ")) + GlassMenu_Truncate(FolderName, 26)));
+		const bool bNoChoice = MemoryRoomManager && !MemoryRoomManager->HasPhotoSourceChoice();
+		// First run: say what to do instead of naming a folder (the Choose folder chip is amber).
+		SubtitleText->SetText(FText::FromString(bNoChoice ? FString(TEXT("Choose a folder to begin")) : FString(TEXT("Photos: ")) + GlassMenu_Truncate(FolderName, 30)));
 	}
 
 	if (StatusText)
@@ -1452,12 +1563,18 @@ void AMemoryRoomMenuActor::RebuildStyleMaterials()
 	UMaterialInterface* Base = GlassTranslucentMaterial ? GlassTranslucentMaterial.Get() : MemoryRoomUI::LoadGlassTranslucentMaterial();
 	GlassTranslucentMaterial = Base;
 
-	// Frosted, warm and fixed. Panels: soft white body, brighter rim. Chips: fainter. Highlight:
-	// amber / honey (never blue). Painted once here, never per frame; 8 distinct textures.
+	// Rev 3 smoky warm glass, fixed. Panels: dark warm brown (#281E16) body at 0.75. Chips:
+	// #3A2C20 at 0.6. Rim light #FFE6C8 blended over the body colour (the rim texel's alpha stays
+	// opaque enough that the edge reads as a lit line, not a hole). Highlight: amber (#F2B866)
+	// body 0.45, rim 0.9. Painted once here, never per frame.
 	using MemoryRoomUI::FGlassPanelSpec;
-	auto Panel = [](float W, float H) { FGlassPanelSpec S; S.WidthCm = W; S.HeightCm = H; S.BodyAlpha = 0.12f; S.RimAlpha = 0.30f; S.RimPixels = 1.5f; S.SheenAlpha = 0.07f; return S; };
-	auto Chip = [](float W, float H) { FGlassPanelSpec S; S.WidthCm = W; S.HeightCm = H; S.BodyAlpha = 0.08f; S.RimAlpha = 0.18f; S.RimPixels = 1.5f; S.SheenAlpha = 0.04f; return S; };
-	auto Hot = [](float W, float H) { FGlassPanelSpec S; S.WidthCm = W; S.HeightCm = H; S.Tint = FLinearColor(0.95f, 0.72f, 0.40f); S.RimTint = FLinearColor(1.0f, 0.78f, 0.42f); S.BodyAlpha = 0.25f; S.RimAlpha = 0.70f; S.RimPixels = 2.0f; S.SheenAlpha = 0.08f; return S; };
+	const FLinearColor SmokePanelTint = FLinearColor::FromSRGBColor(FColor(0x28, 0x1E, 0x16));
+	const FLinearColor SmokeChipTint = FLinearColor::FromSRGBColor(FColor(0x3A, 0x2C, 0x20));
+	const FLinearColor SmokeRimLight = FLinearColor::FromSRGBColor(FColor(0xFF, 0xE6, 0xC8));
+	const FLinearColor SmokeAmber = FLinearColor::FromSRGBColor(FColor(0xF2, 0xB8, 0x66));
+	auto Panel = [SmokePanelTint, SmokeRimLight](float W, float H) { FGlassPanelSpec S; S.WidthCm = W; S.HeightCm = H; S.Tint = SmokePanelTint; S.RimTint = FMath::Lerp(SmokePanelTint, SmokeRimLight, 0.35f); S.BodyAlpha = 0.75f; S.RimAlpha = 0.88f; S.RimPixels = 1.5f; S.SheenAlpha = 0.05f; return S; };
+	auto Chip = [SmokeChipTint, SmokeRimLight](float W, float H) { FGlassPanelSpec S; S.WidthCm = W; S.HeightCm = H; S.Tint = SmokeChipTint; S.RimTint = FMath::Lerp(SmokeChipTint, SmokeRimLight, 0.35f); S.BodyAlpha = 0.60f; S.RimAlpha = 0.80f; S.RimPixels = 1.5f; S.SheenAlpha = 0.04f; return S; };
+	auto Hot = [SmokeAmber](float W, float H) { FGlassPanelSpec S; S.WidthCm = W; S.HeightCm = H; S.Tint = SmokeAmber; S.RimTint = FMath::Lerp(SmokeAmber, FLinearColor::White, 0.15f); S.BodyAlpha = 0.45f; S.RimAlpha = 0.90f; S.RimPixels = 2.0f; S.SheenAlpha = 0.06f; return S; };
 	auto Make = [this, Base](const FGlassPanelSpec& Spec)
 	{
 		return MemoryRoomUI::MakeTranslucentMaterial(Base, MemoryRoomUI::MakeFrostedPanelTexture(Spec), this);
@@ -1466,8 +1583,10 @@ void AMemoryRoomMenuActor::RebuildStyleMaterials()
 	const float ActionHalfY = GlassMenu_ChipW * 0.5f;
 	const float ActionHalfZ = GlassMenu_ChipH * 0.5f;
 	BoardGlassMaterial = Make(Panel(BoardPanelWidthCm, BoardPanelHeightCm));
-	SquareChipMaterial = Make(Chip(PressHalfY * 2.0f, PressHalfZ * 2.0f));
-	SquareChipHotMaterial = Make(Hot(PressHalfY * 2.0f, PressHalfZ * 2.0f));
+	SquareChipMaterial = Make(Chip(GlassMenu_ArrowHalfY * 2.0f, GlassMenu_ArrowHalfZ * 2.0f));
+	SquareChipHotMaterial = Make(Hot(GlassMenu_ArrowHalfY * 2.0f, GlassMenu_ArrowHalfZ * 2.0f));
+	TabChipMaterial = Make(Chip(8.6f, GlassMenu_TabH));
+	TabChipHotMaterial = Make(Hot(8.6f, GlassMenu_TabH));
 	WideChipMaterial = Make(Chip(ActionHalfY * 2.0f, ActionHalfZ * 2.0f));
 	WideChipHotMaterial = Make(Hot(ActionHalfY * 2.0f, ActionHalfZ * 2.0f));
 	UpChipMaterial = Make(Chip(GlassMenu_WinUpHalfY * 2.0f, GlassMenu_WinBtnHalfZ * 2.0f));
@@ -1481,6 +1600,11 @@ void AMemoryRoomMenuActor::RebuildStyleMaterials()
 	FolderTileHotMaterial = Make(TileHotSpec);
 
 	if (BackgroundPanel && BoardGlassMaterial) BackgroundPanel->SetMaterial(0, BoardGlassMaterial);
+	// Setting rows' slim backgrounds are static wide chips.
+	for (FMemoryRoomMenuRow& Row : Rows)
+	{
+		if (Row.RowPanel && WideChipMaterial) Row.RowPanel->SetMaterial(0, WideChipMaterial);
+	}
 	if (BrowserPanel && FolderWindowMaterial) BrowserPanel->SetMaterial(0, FolderWindowMaterial);
 
 	// Painted icons: one small translucent texture per shape, shared by every plane that uses it.
@@ -1497,6 +1621,8 @@ void AMemoryRoomMenuActor::RebuildStyleMaterials()
 	for (FMemoryRoomMenuRow& Row : Rows)
 	{
 		if (Row.Icon) Row.Icon->SetMaterial(0, IconMaterialFor(Row.IconKind));
+		if (Row.MinusIcon) Row.MinusIcon->SetMaterial(0, IconMaterialFor(MemoryRoomUI::EGlassIcon::Prev));
+		if (Row.PlusIcon) Row.PlusIcon->SetMaterial(0, IconMaterialFor(MemoryRoomUI::EGlassIcon::Next));
 	}
 	for (FMemoryRoomFolderButton* Button : { &BrowserUp, &BrowserClose, &BrowserPrev, &BrowserNext, &BrowserUse })
 	{
@@ -1519,26 +1645,36 @@ void AMemoryRoomMenuActor::ApplyHoverVisuals()
 {
 	if (!bStyled) return;
 	const UPrimitiveComponent* Hovered = HoveredComponent.Get();
+	// Tabs: the active one is amber, the others smoky glass that goes amber under the pointer.
+	for (int32 i = 0; i < TabButtons.Num(); ++i)
+	{
+		FMemoryRoomFolderButton& Tab = TabButtons[i];
+		const bool bTabHot = Hovered == Tab.Box;
+		const bool bActive = i == ActiveTab;
+		if (Tab.Panel && TabChipMaterial && TabChipHotMaterial) Tab.Panel->SetMaterial(0, (bTabHot || bActive) ? TabChipHotMaterial : TabChipMaterial);
+		if (Tab.Label) Tab.Label->SetTextRenderColor((bTabHot || bActive) ? HighlightColor : LabelColor);
+	}
+	// First run (no saved folder): the Choose folder chip is amber at rest.
+	const bool bNeedsFolderChoice = MemoryRoomManager && !MemoryRoomManager->HasPhotoSourceChoice();
 	for (FMemoryRoomMenuRow& Row : Rows)
 	{
 		const bool bMinusHot = Hovered == Row.MinusBox;
 		const bool bPlusHot = Hovered == Row.PlusBox;
 
 		// Chips swap to the amber glass at once; size and lift ease in over a few frames
-		// (TickHoverAnimation). Setting rows use the square chip, action rows the wide one.
-		UMaterialInterface* Rest = Row.bIsSetting ? SquareChipMaterial.Get() : WideChipMaterial.Get();
+		// (TickHoverAnimation). Setting arrows use the square chip, action rows the wide one.
+		const bool bPrompt = !Row.bIsSetting && Row.Action == EMemoryRoomMenuAction::ChoosePhotoSource && bNeedsFolderChoice;
+		UMaterialInterface* Rest = Row.bIsSetting ? SquareChipMaterial.Get() : (bPrompt ? WideChipHotMaterial.Get() : WideChipMaterial.Get());
 		UMaterialInterface* HotMat = Row.bIsSetting ? SquareChipHotMaterial.Get() : WideChipHotMaterial.Get();
 		if (Row.MinusPanel && Rest && HotMat) Row.MinusPanel->SetMaterial(0, bMinusHot ? HotMat : Rest);
 		if (Row.PlusPanel && Rest && HotMat) Row.PlusPanel->SetMaterial(0, bPlusHot ? HotMat : Rest);
 
-		if (Row.MinusGlyph) Row.MinusGlyph->SetTextRenderColor(bMinusHot ? HighlightColor : DimLabelColor);
-		if (Row.PlusGlyph) Row.PlusGlyph->SetTextRenderColor(bPlusHot ? HighlightColor : DimLabelColor);
 		if (Row.Label)
 		{
-			// A setting tile lights its name only when one of its own arrows is under the
-			// pointer, so a crowded glance still tells you which tile you are about to change.
-			const bool bTileHot = Row.bIsSetting ? (bMinusHot || bPlusHot) : bMinusHot;
-			Row.Label->SetTextRenderColor(bTileHot ? HighlightColor : (Row.bIsSetting ? DimLabelColor : LabelColor));
+			// A setting row lights its name only when one of its own arrows is under the
+			// pointer, so a crowded glance still tells you which row you are about to change.
+			const bool bTileHot = Row.bIsSetting ? (bMinusHot || bPlusHot) : (bMinusHot || bPrompt);
+			Row.Label->SetTextRenderColor(bTileHot ? HighlightColor : LabelColor);
 		}
 		if (Row.ValueText)
 		{

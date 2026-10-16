@@ -61,3 +61,21 @@ VR Preview runs on the PC, so there are no headset folders there; the PC path sh
 - Settings (Spiral twist, Dust, ...) stay a compact two-per-line [<] value [>] block under the single column of action chips: eleven more full-width rows would make the board over a metre tall. The "Photos" album-cycling setting is off the board (Choose folder + the subtitle replace it).
 - The folder window is a child of the board root (same plane, scale and open animation). While it is open the board slides left by half the pair offset so the pair is centred in view. Tunables: FolderWindowGapCm (4), FolderWindowInwardYawDegrees (8, max 12).
 - On the PC the "All photos" tile is not offered (it only ever scanned the Pictures folder).
+
+## Rev 3 (2026-10-15, after first VR look) — supersedes conflicting lines above
+User feedback: glass too transparent to read; folder window pops up on menu open; board too high (must look up).
+1. **Smoky warm glass** (user choice): panel body = dark warm brown (~#281E16) at ~0.75 alpha, chips ~#3A2C20 at ~0.6, rim light warm (~#FFE6C8) at ~0.35, faint top sheen kept. Hover/selected/primary = amber (~#F2B866) body ~0.45, rim ~0.9. Text stays warm off-white; secondary text ~70%. Text must read clearly against a bright sky.
+2. **Tabs on the board** (user choice B): one small board. Under the title + "Photos: <folder>" subtitle, a tab strip: Home / Gallery / Atmosphere / Comfort (active tab amber). Below it only the active tab's rows:
+   - Home: Reset view, Jump to newest, Reload photos, Choose folder, Close (full-width icon chips, as now).
+   - Gallery: Spiral twist, Photo spacing, Photos in view, Scroll speed.
+   - Atmosphere: Time of day, Night photo glow, Particles (Theme setting), Dust amount.
+   - Comfort: Float, Thumbnail quality.
+   Setting row = one full-width slim row: label left-aligned, "‹ value ›" right with ‹ and › as their own hit boxes (painted icons). Board height fixed to the tallest tab so it doesn't jump between tabs. Menu opens on Home. PhotoAlbum setting stays off the board.
+3. **No auto-open**: the folder window opens only when Choose folder is pressed (remove the OpenMenu auto-open). First run without a saved choice: subtitle reads "Choose a folder to begin" and the Choose folder chip is amber-highlighted.
+4. **Placement**: board centre ~28 cm below eye height, ~65 cm ahead, tilted back to face the eye (pitch so the board normal points at the head, ~20°). Top edge must be below eye level whatever the board height. The folder window keeps sitting beside the board with the same tilt.
+
+## Build notes (rev 3 implementation)
+- Tabs: Home (5 action chips), Gallery (Spiral twist, Photo spacing, Photos in view, Scroll speed), Atmosphere (Time of day, Night photo glow, Particles, Dust amount), Comfort (Float, Thumbnail quality). Board height = tallest tab (Home). Opens on Home.
+- Board width 36 chip + margins; tab widths follow label length. Setting row: name left, painted arrows (3.6 x 4.4 press boxes) and value right.
+- First run (no saved folder): the board still opens itself (BeginPlay), the folder window does not; subtitle "Choose a folder to begin", Choose folder chip amber.
+- Placement tunables (replace SummonDistanceCm / SummonHeightOffsetCm / MenuPitchDegrees): BoardDistanceCm 65, BoardCentreBelowEyeCm 28 (raised to keep the top edge 3 cm below the eye if the board is tall), BoardTiltDegrees 20. Actor origin is the board centre.
