@@ -73,3 +73,9 @@ User feedback: glass too transparent to read; folder window pops up on menu open
    Setting row = one full-width slim row: label left-aligned, "‹ value ›" right with ‹ and › as their own hit boxes (painted icons). Board height fixed to the tallest tab so it doesn't jump between tabs. Menu opens on Home. PhotoAlbum setting stays off the board.
 3. **No auto-open**: the folder window opens only when Choose folder is pressed (remove the OpenMenu auto-open). First run without a saved choice: subtitle reads "Choose a folder to begin" and the Choose folder chip is amber-highlighted.
 4. **Placement**: board centre ~28 cm below eye height, ~65 cm ahead, tilted back to face the eye (pitch so the board normal points at the head, ~20°). Top edge must be below eye level whatever the board height. The folder window keeps sitting beside the board with the same tilt.
+
+## Build notes (rev 3 implementation)
+- Tabs: Home (5 action chips), Gallery (Spiral twist, Photo spacing, Photos in view, Scroll speed), Atmosphere (Time of day, Night photo glow, Particles, Dust amount), Comfort (Float, Thumbnail quality). Board height = tallest tab (Home). Opens on Home.
+- Board width 36 chip + margins; tab widths follow label length. Setting row: name left, painted arrows (3.6 x 4.4 press boxes) and value right.
+- First run (no saved folder): the board still opens itself (BeginPlay), the folder window does not; subtitle "Choose a folder to begin", Choose folder chip amber.
+- Placement tunables (replace SummonDistanceCm / SummonHeightOffsetCm / MenuPitchDegrees): BoardDistanceCm 65, BoardCentreBelowEyeCm 28 (raised to keep the top edge 3 cm below the eye if the board is tall), BoardTiltDegrees 20. Actor origin is the board centre.
