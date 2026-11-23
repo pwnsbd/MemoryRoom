@@ -36,3 +36,11 @@ Pass:
 
 Lingo never scans or edits code — it only records what you tell it.
 <!-- lingo:end -->
+
+## Agent notes
+
+- 2026-10-13 — user tested in PIE after merges, but the editor was still running the Sep 12 module (game-target builds do not update the editor DLL) → after merging C++ changes, close the editor, build the MemoryRoomEditor target, and only then ask for a headset test
+- 2026-10-13 — Meta hands placed with SDK wrist targets as plain component offsets came out mis-rotated three times (BP_VRPawn controllers are actually clean: identity, sources Left / RightAim) → reproduce the SDK's wrist-bone solve exactly; never turn an SDK bone target into a component offset or calibrate by guessed rotations
+- 2026-10-13 — five rounds closing/reopening the editor for .cpp-only fixes → for .cpp-only changes ask the user to press Ctrl+Alt+F11 (Live Coding) in the open editor; close + full editor build only when a header/UPROPERTY changed
+- 2026-10-13 — two unity-build clashes (same-named constants in anonymous namespaces across .cpp files) broke the merged build though each worktree built alone → briefs say: file-local constants get a file-specific prefix; builders build with unity ON
+- 2026-10-15 — P13 glass menu shipped with a 2-column uppercase board, no icons, and a folder window floating far off to the side, unlike the approved mockup, because the brief described behaviour but not geometry → UI briefs include a layout spec (panel sizes in cm, row/column structure, text case, icons, relative placement) taken from the approved mockup, and the done-check names each mockup element

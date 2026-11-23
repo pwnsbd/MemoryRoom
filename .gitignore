@@ -28,3 +28,6 @@ $FUNC($$$ARGS)
 AddScrollInput($ARG)
 SetStaticMesh($ARG)
 SetTextureParameterValue($ARGS)
+
+# Meta Interaction SDK v1.207.0 (~3 GB), copied from RayForge; not in git
+Plugins/MetaXRInteraction/

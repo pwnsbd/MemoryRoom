@@ -26,7 +26,13 @@ AMemoryRoomDustActor::AMemoryRoomDustActor()
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> SphereMesh(TEXT("/Engine/BasicShapes/Sphere.Sphere"));
 	if (SphereMesh.Succeeded())
 	{
-		MoteMeshes->SetStaticMesh(SphereMesh.Object);
+		DustSphereMesh = SphereMesh.Object;
+		MoteMeshes->SetStaticMesh(DustSphereMesh);
+	}
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneMesh(TEXT("/Engine/BasicShapes/Plane.Plane"));
+	if (PlaneMesh.Succeeded())
+	{
+		LeafPlaneMesh = PlaneMesh.Object;
 	}
 	MoteMeshes->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	MoteMeshes->SetCollisionProfileName(TEXT("NoCollision"));
@@ -53,6 +59,10 @@ void AMemoryRoomDustActor::BuildMotes()
 
 	MoteMeshes->ClearInstances();
 	Motes.Reset();
+	ActiveMoteCount = 0;
+	// Drop the old material wrapper so it re-wraps the new style's mesh material.
+	MoteMeshes->SetMaterial(0, nullptr);
+	MoteMaterialInstance = nullptr;
 
 	const int32 SafeCount = FMath::Clamp(MoteCount, 0, 2000);
 	if (SafeCount <= 0)
@@ -63,6 +73,11 @@ void AMemoryRoomDustActor::BuildMotes()
 	Motes.Reserve(SafeCount);
 	FRandomStream Random(DustSeed);
 	const float Radius = FMath::Max(FieldRadiusCm, 100.0f);
+	const bool bLeaf = MoteStyle == EMemoryRoomMoteStyle::Leaf;
+
+	// Both the engine sphere and the engine plane are 100cm across, so the same mesh
+	// (chosen here, per style) and the same /100 scale math below work for either.
+	MoteMeshes->SetStaticMesh(bLeaf && LeafPlaneMesh ? LeafPlaneMesh : DustSphereMesh);
 
 	TArray<FTransform> InstanceTransforms;
 	InstanceTransforms.Reserve(SafeCount);
@@ -81,11 +96,29 @@ void AMemoryRoomDustActor::BuildMotes()
 		Mote.Scale = Random.FRandRange(0.55f, 1.45f);
 		Mote.TwinklePhase = Random.FRandRange(0.0f, TWO_PI);
 		Mote.TwinkleRate = Random.FRandRange(FMath::Max(TwinkleSpeedMin, 0.05f), FMath::Max(TwinkleSpeedMax, TwinkleSpeedMin + 0.05f));
+		Mote.TumbleRateDegPerSec = Random.FRandRange(FMath::Max(TumbleSpeedDegPerSecMin, 0.0f), FMath::Max(TumbleSpeedDegPerSecMax, TumbleSpeedDegPerSecMin + 1.0f));
+		if (Random.FRand() > 0.5f)
+		{
+			Mote.TumbleRateDegPerSec = -Mote.TumbleRateDegPerSec;
+		}
 		Motes.Add(Mote);
 
-		const float MoteRadiusCm = FMath::Max(MoteSizeCm, 0.1f) * Mote.Scale;
-		// The engine sphere is 100cm across, hence the /100.
+		const float SizeCm = bLeaf ? LeafSizeCm : MoteSizeCm;
+		const float MoteRadiusCm = FMath::Max(SizeCm, 0.1f) * Mote.Scale;
 		InstanceTransforms.Emplace(FQuat::Identity, Mote.BasePosition, FVector(MoteRadiusCm / 100.0f));
+	}
+
+	// The engine plane is single-sided, so each leaf gets a second plane flipped over it
+	// (instances SafeCount..2*SafeCount-1, driven in lockstep from Tick) to show from both sides.
+	if (bLeaf)
+	{
+		// Copy out first: TArray::Add asserts when handed a reference to one of its own elements.
+		InstanceTransforms.Reserve(SafeCount * 2);
+		for (int32 Index = 0; Index < SafeCount; ++Index)
+		{
+			const FTransform Partner = InstanceTransforms[Index];
+			InstanceTransforms.Add(Partner);
+		}
 	}
 
 	MoteMeshes->AddInstances(InstanceTransforms, false, false);
@@ -125,10 +158,46 @@ void AMemoryRoomDustActor::ApplyDustTintToMaterial()
 	{
 		if (!ParameterName.IsNone())
 		{
-			MoteMaterialInstance->SetVectorParameterValue(ParameterName, DustTint);
+			MoteMaterialInstance->SetVectorParameterValue(ParameterName, GetEffectiveTint());
 		}
 	}
 }
+
+FLinearColor AMemoryRoomDustActor::GetEffectiveTint() const
+{
+	// Leaves fall back to an autumn orange when the theme leaves the tint at neutral white.
+	if (MoteStyle == EMemoryRoomMoteStyle::Leaf && DustTint.Equals(FLinearColor::White, 0.02f))
+	{
+		return FLinearColor(0.85f, 0.38f, 0.08f, 1.0f);
+	}
+	return DustTint;
+}
+
+void AMemoryRoomDustActor::SetMoteStyle(EMemoryRoomMoteStyle NewStyle)
+{
+	if (MoteStyle == NewStyle)
+	{
+		return;
+	}
+	MoteStyle = NewStyle;
+	// Before BeginPlay the field does not exist yet; BeginPlay builds it in the new style.
+	if (HasActorBegunPlay())
+	{
+		BuildMotes();
+		SetDensityLevel(DensityLevel);
+	}
+}
+
+#if WITH_EDITOR
+void AMemoryRoomDustActor::PostEditChangeProperty(FPropertyChangedEvent& PropertyChangedEvent)
+{
+	Super::PostEditChangeProperty(PropertyChangedEvent);
+	if (PropertyChangedEvent.GetPropertyName() == GET_MEMBER_NAME_CHECKED(AMemoryRoomDustActor, MoteStyle) && HasActorBegunPlay())
+	{
+		BuildMotes();
+	}
+}
+#endif
 
 void AMemoryRoomDustActor::SetDustTint(FLinearColor NewTint)
 {
@@ -198,10 +267,13 @@ void AMemoryRoomDustActor::Tick(float DeltaSeconds)
 		FieldCenter = ViewLocation;
 	}
 
+	const bool bLeaf = MoteStyle == EMemoryRoomMoteStyle::Leaf;
+
 	// Thin the field out when the room is lit; motes are a night effect and would just be
-	// visual noise against a bright sky.
+	// visual noise against a bright sky. Leaves are an all-hours ambient effect, so this
+	// thinning does not apply to them.
 	int32 DesiredMoteCount = Motes.Num();
-	if (bScaleDensityWithNight)
+	if (bScaleDensityWithNight && !bLeaf)
 	{
 		float NightAmount = 0.0f;
 		if (const AMemoryRoomSkyDomeActor* SkyDome = ResolveSkyDome())
@@ -228,10 +300,31 @@ void AMemoryRoomDustActor::Tick(float DeltaSeconds)
 		const FMote& Mote = Motes[Index];
 
 		FVector Position = Mote.BasePosition;
-		// Drift along the mote's own axis, plus a slow bob so the field never looks like it
-		// is sliding as one block.
-		Position += Mote.DriftAxis * (FMath::Sin(Time * Mote.Rate * 0.35f + Mote.Phase) * Drift * 6.0f);
-		Position.Z += FMath::Sin(Time * Mote.Rate * 0.5f + Mote.Phase * 1.3f) * Drift;
+		FQuat InstanceRotation = FQuat::Identity;
+		if (bLeaf)
+		{
+			// Constant push along the wind direction (not a bounded oscillation like Dust
+			// below) so leaves visibly stream across the field and wrap around, plus a
+			// perpendicular flutter so they do not travel in a dead-straight line.
+			const FVector2D WindDir = WindDirection.IsNearlyZero() ? FVector2D(1.0f, 0.0f) : WindDirection.GetSafeNormal();
+			const FVector2D WindPerp(-WindDir.Y, WindDir.X);
+			const float WindStrength = FMath::Max(WindStrengthCmPerSecond, 0.0f);
+			const float Sway = FMath::Max(SwayAmountCm, 0.0f);
+			const float SwayOffset = Sway * FMath::Sin(Time * Mote.Rate + Mote.Phase);
+			Position.X += WindDir.X * WindStrength * Time + WindPerp.X * SwayOffset;
+			Position.Y += WindDir.Y * WindStrength * Time + WindPerp.Y * SwayOffset;
+			// Gentle vertical bob, like a leaf riding little eddies rather than falling straight.
+			Position.Z += FMath::Sin(Time * Mote.Rate * 0.6f + Mote.Phase * 1.3f) * Sway * 0.3f;
+
+			InstanceRotation = FQuat(Mote.DriftAxis, FMath::DegreesToRadians(Mote.TumbleRateDegPerSec) * Time + Mote.Phase);
+		}
+		else
+		{
+			// Drift along the mote's own axis, plus a slow bob so the field never looks like it
+			// is sliding as one block.
+			Position += Mote.DriftAxis * (FMath::Sin(Time * Mote.Rate * 0.35f + Mote.Phase) * Drift * 6.0f);
+			Position.Z += FMath::Sin(Time * Mote.Rate * 0.5f + Mote.Phase * 1.3f) * Drift;
+		}
 
 		// Wrap inside the box so the field travels with the player without respawning.
 		// FVector components are double in UE5, so the bounds have to match.
@@ -244,14 +337,21 @@ void AMemoryRoomDustActor::Tick(float DeltaSeconds)
 
 		const bool bActive = Index < DesiredMoteCount;
 		// 1.0 +/- TwinkleAmount, on the mote's own decorrelated cycle - see the TwinklePhase
-		// comment on FMote for why this does not just reuse Phase/Rate.
-		const float Twinkle = 1.0f + TwinkleAmount * FMath::Sin(Time * Mote.TwinkleRate + Mote.TwinklePhase);
-		const float MoteRadiusCm = FMath::Max(MoteSizeCm, 0.1f) * Mote.Scale * FMath::Max(Twinkle, 0.0f);
+		// comment on FMote for why this does not just reuse Phase/Rate. Leaves do not twinkle.
+		const float Twinkle = bLeaf ? 1.0f : (1.0f + TwinkleAmount * FMath::Sin(Time * Mote.TwinkleRate + Mote.TwinklePhase));
+		const float SizeCm = bLeaf ? LeafSizeCm : MoteSizeCm;
+		const float MoteRadiusCm = FMath::Max(SizeCm, 0.1f) * Mote.Scale * FMath::Max(Twinkle, 0.0f);
 		// Culled motes are scaled to nothing rather than removed, so the instance buffer
 		// never has to be rebuilt.
 		const FVector InstanceScale = bActive ? FVector(MoteRadiusCm / 100.0f) : FVector::ZeroVector;
 
-		MoteMeshes->UpdateInstanceTransform(Index, FTransform(FQuat::Identity, FieldCenter + Position, InstanceScale), true, false, true);
+		MoteMeshes->UpdateInstanceTransform(Index, FTransform(InstanceRotation, FieldCenter + Position, InstanceScale), true, false, true);
+		if (bLeaf)
+		{
+			// Back-to-back partner plane: same spot, flipped 180 degrees about its local X axis.
+			const FQuat FlippedRotation = InstanceRotation * FQuat(FVector::XAxisVector, PI);
+			MoteMeshes->UpdateInstanceTransform(Index + Motes.Num(), FTransform(FlippedRotation, FieldCenter + Position, InstanceScale), true, false, true);
+		}
 	}
 
 	MoteMeshes->MarkRenderStateDirty();

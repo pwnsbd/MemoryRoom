@@ -50,4 +50,22 @@ public:
 
 	UPROPERTY(BlueprintReadWrite, Category = "Memory Room|Settings")
 	EMemoryRoomThemeId ThemeId = EMemoryRoomThemeId::Hearth;
+
+	// Ambient particle style (Dust / Leaves) chosen in the settings menu.
+	UPROPERTY(BlueprintReadWrite, Category = "Memory Room|Settings")
+	EMemoryRoomMoteStyle ParticleStyle = EMemoryRoomMoteStyle::Dust;
+
+	// Which album the gallery shows: MediaStore bucket id on Android, folder path on PC.
+	// "@all" means All photos; an empty value means no explicit choice in new saves.
+	UPROPERTY(BlueprintReadWrite, Category = "Memory Room|Settings")
+	FString PhotoAlbumId;
+
+	// Empty PhotoAlbumId means the user explicitly chose All photos. This flag keeps that
+	// choice distinct from a fresh install that still needs to choose a source.
+	UPROPERTY(BlueprintReadWrite, Category = "Memory Room|Settings")
+	bool bHasPhotoSourceChoice = false;
+
+	// Lets older saves be distinguished from new saves where no source was chosen yet.
+	UPROPERTY(BlueprintReadWrite, Category = "Memory Room|Settings")
+	int32 PhotoSourceChoiceVersion = 0;
 };
