@@ -16,7 +16,7 @@ class UCameraComponent;
 class UMaterialInterface;
 class UStaticMesh;
 class UStaticMeshComponent;
-class UTextRenderComponent;
+class UMemoryRoomMetaRigComponent;
 class USceneComponent;
 class USplineComponent;
 class USplineMeshComponent;
@@ -92,6 +92,14 @@ public:
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
 	void StopLocomotionMoveInput();
 
+	// Right-stick smooth turn (X axis only) - forwards to AMemoryRoomManager. Wire
+	// IA_MemoryRoomTurn (Axis1D) Triggered -> SetTurnInput, Completed -> StopTurnInput.
+	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
+	void SetTurnInput(float Value);
+
+	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
+	void StopTurnInput();
+
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
 	void ToggleFloat();
 
@@ -100,11 +108,6 @@ public:
 	// No effect otherwise (there is nothing to zoom).
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Zoom")
 	void AddZoomInput(float Amount);
-
-	// Analog hand curl. Wire the trigger and grip axes here if you want the fingers to follow
-	// the pull; the grab and release calls above already drive it on their own otherwise.
-	UFUNCTION(BlueprintCallable, Category = "Memory Room|Controllers")
-	void SetHandCurlInput(float GripValue, float TriggerValue);
 
 protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Selection")
@@ -261,83 +264,6 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Debug")
 	bool bDebugSelectionLog;
 
-	// Draws each motion controller's own axes at the controller, with a label naming its
-	// motion source. Answers "which way is this controller actually pointing" directly,
-	// instead of guessing offsets and rotations from the outside. Off now that the numbers it
-	// gave (see quest-grip-pose-axes in project memory) are baked into the hand rotations and
-	// the wrist-reveal gate; flip back on if either ever needs re-measuring.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Calibration")
-	bool bShowControllerCalibration = false;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Calibration", meta = (ClampMin = "1.0"))
-	float CalibrationAxisLength = 12.0f;
-
-	// A UMotionControllerComponent draws nothing on its own - the model comes from a child
-	// UXRDeviceVisualizationComponent, and BP_VRPawn only ever had one, on the right hand.
-	// With this on, any hand controller missing one gets a visualization built to match the
-	// one that already exists, so both hands show the same model in the same style.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	bool bEnsureHandVisuals = true;
-
-	// Draw the XR template's mannequin hand in place of the controller model. Off falls back
-	// to the plain controller models on both hands.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	bool bUseHandMeshes = true;
-
-	// The right hand's transform was solved from measured axes and holds up. The left hand's
-	// did not - two rounds of fixes still left it pointing the wrong way, because every fix
-	// was built on a guessed or mismeasured axis rather than the component's real configured
-	// values. Off until the left is recalibrated from BP_VRPawn's own Details panel (Motion
-	// Source, Relative Location/Rotation/Scale on LeftController) rather than from arrows and
-	// word descriptions; until then the left controller shows the plain stock model, same as
-	// bUseHandMeshes being off would give it.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	bool bUseHandMeshOnLeft = false;
-
-	// Only the right-hand mesh is used; the left is the same mesh mirrored (see
-	// EnsureHandVisuals).
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FString HandMeshPath = TEXT("/Game/XRMannequins/Meshes/SKM_MannyXR_right.SKM_MannyXR_right");
-
-	// The open-to-fist clip the curl scrubs through. Right-hand only, like the mesh.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FString HandGraspAnimPath = TEXT("/Game/XRMannequins/Animations/A_MannequinsXR_Grasp_Right.A_MannequinsXR_Grasp_Right");
-
-	// Where the wrist sits relative to the controller. In grip-pose axes -X is downward and
-	// +Z is back toward the player, so this drops the wrist slightly below the controller and
-	// pulls it back along the forearm.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FVector HandRelativeLocation = FVector(-2.0f, 0.0f, 3.0f);
-
-	// Solved, not nudged. Two measured facts about the grip pose - it aims along -Z and its
-	// +X points up out of the top - and two facts about the mesh: the fingers run along the
-	// mesh's local +Y and the back of the hand faces its local +Z. The rotation that carries
-	// (fingers, back of hand) onto (aim, up) is the pair below.
-	//
-	// The finger axis is measured too: with the mesh pitched -90 the fingers came out along
-	// world left, which only holds if they run along +Y in mesh space. The back-of-hand axis
-	// is the one thing still assumed, and it only affects roll about the pointing direction -
-	// so if the hands aim correctly but are rolled wrong, move Roll in 90 degree steps.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FRotator RightHandRelativeRotation = FRotator(0.0f, -90.0f, 90.0f);
-
-	// Mirrored on Y before the rotation is applied, so the left is not the right's rotation
-	// with a sign flipped - it is its own solution, and both yaw and roll come out opposite.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers")
-	FRotator LeftHandRelativeRotation = FRotator(0.0f, 90.0f, -90.0f);
-
-	// How far the trigger alone curls the hand. The grip always curls it the whole way.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers", meta = (ClampMin = "0.0", ClampMax = "1.0"))
-	float TriggerCurlAmount = 0.55f;
-
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers", meta = (ClampMin = "0.1"))
-	float HandCurlInterpSpeed = 22.0f;
-
-	// How long a trigger press holds the partial curl, since the trigger is bound as a press
-	// rather than an axis.
-	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Controllers", meta = (ClampMin = "0.0"))
-	float TriggerPulseDuration = 0.18f;
-
 private:
 	void ApplyDefaultAssetReferences();
 	void ApplyDefaultComponentReferences();
@@ -347,10 +273,6 @@ private:
 	UCameraComponent* ResolveCameraComponent();
 	AMemoryRoomManager* ResolveMemoryRoomManager();
 	void EnsurePointerComponents();
-	void EnsureHandVisuals();
-	void UpdateHandCurl(float DeltaTime);
-	void UpdateControllerCalibration(float DeltaTime);
-	AMemoryRoomMenuActor* ResolveMenuActorForCalibration() const;
 	void UpdatePointerVisual(USplineComponent* Spline, USplineMeshComponent* Beam, UStaticMeshComponent* HitIndicator, const FVector& Start, const FVector& End, bool bValidTarget, bool bShowHitIndicator, bool bUseBeamVisual, bool bUseHmdTargetX, float IndicatorRadiusScale = 1.0f);
 	void UpdateHmdTargetXVisual(const FVector& Start, const FVector& End, bool bVisible);
 	void HideHmdTargetXVisual();
@@ -435,22 +357,10 @@ private:
 	// photo into a camera-follower.
 	FTransform CachedExpandedBaseTransform = FTransform::Identity;
 
+	// Built in BeginPlay; draws the controllers and hands with the Meta Interaction SDK rigs and
+	// supplies the left aim-pose controller the left laser starts from.
 	UPROPERTY(Transient)
-	TArray<TObjectPtr<UTextRenderComponent>> CalibrationLabels;
-
-	UPROPERTY(Transient)
-	TObjectPtr<USkeletalMeshComponent> LeftHandMeshComponent;
-
-	UPROPERTY(Transient)
-	TObjectPtr<USkeletalMeshComponent> RightHandMeshComponent;
-
-	// Where the fingers are being asked to go, and where they actually are this frame.
-	float TargetHandCurl = 0.0f;
-	float CurrentHandCurl = 0.0f;
-	// The three things that can ask for curl: a held grab, an analog axis, a trigger tap.
-	bool bGrabCurlHeld = false;
-	float AnalogHandCurl = 0.0f;
-	float TriggerPulseSeconds = 0.0f;
+	TObjectPtr<UMemoryRoomMetaRigComponent> MetaRig;
 
 	UPROPERTY(Transient)
 	TObjectPtr<USplineComponent> PointerSplineComponent;
