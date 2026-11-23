@@ -14,7 +14,7 @@ namespace
 constexpr int32 SolidTextureSize = 4;
 // Wide enough for the vignette in MakeVerticalGradientTexture to fall off smoothly under
 // bilinear filtering instead of banding across a panel this size.
-constexpr int32 GradientTextureWidth = 24;
+constexpr int32 GlassGradientTextureWidth = 24;
 
 UTexture2D* PaintTexture(int32 Width, int32 Height, TFunctionRef<FColor(int32 X, int32 Y)> Paint)
 {
@@ -52,6 +52,16 @@ UTexture2D* PaintTexture(int32 Width, int32 Height, TFunctionRef<FColor(int32 X,
 	}
 	Texture->UpdateResource();
 	return Texture;
+}
+
+// Signed distance in pixels from a point to a rounded rectangle centred on the origin with
+// the given half extents and corner radius. Negative inside.
+float GlassFrost_RoundedBoxSdf(float Px, float Py, float HalfW, float HalfH, float Radius)
+{
+	const float Qx = FMath::Abs(Px) - (HalfW - Radius);
+	const float Qy = FMath::Abs(Py) - (HalfH - Radius);
+	const float Outside = FMath::Sqrt(FMath::Square(FMath::Max(Qx, 0.0f)) + FMath::Square(FMath::Max(Qy, 0.0f)));
+	return Outside + FMath::Min(FMath::Max(Qx, Qy), 0.0f) - Radius;
 }
 } // namespace
 
@@ -103,7 +113,7 @@ void UpdateSolidTexture(UTexture2D* Texture, const FLinearColor& Color)
 UTexture2D* MakeVerticalGradientTexture(const FLinearColor& Top, const FLinearColor& Bottom, int32 Rows, float GlowBias, bool bFlip)
 {
 	const int32 Height = FMath::Clamp(Rows, 2, 1024);
-	const int32 Width = GradientTextureWidth;
+	const int32 Width = GlassGradientTextureWidth;
 	const float SafeBias = FMath::Max(GlowBias, 0.05f);
 	return PaintTexture(Width, Height, [&](int32 X, int32 Y)
 	{
@@ -168,5 +178,87 @@ UMaterialInstanceDynamic* MakeSolidMaterial(UMaterialInterface* Base, const FLin
 UMaterialInstanceDynamic* MakeGlassMaterial(UMaterialInterface* Base, const FMemoryRoomWristUIStyle& Style, UObject* Outer, bool bFlip)
 {
 	return MakeTextureMaterial(Base, MakeVerticalGradientTexture(Style.PanelColor, Style.GlassGlowColor, 64, 1.8f, bFlip), Outer);
+}
+
+const TCHAR* GlassTranslucentMaterialPath()
+{
+	return TEXT("/Engine/EngineMaterials/Widget3DPassThrough_Translucent.Widget3DPassThrough_Translucent");
+}
+
+UMaterialInterface* LoadGlassTranslucentMaterial()
+{
+	return LoadObject<UMaterialInterface>(nullptr, GlassTranslucentMaterialPath());
+}
+
+UTexture2D* MakeFrostedPanelTexture(const FGlassPanelSpec& Spec, int32 MaxSide)
+{
+	const float Long = FMath::Max(FMath::Max(Spec.WidthCm, Spec.HeightCm), 0.01f);
+	const int32 Side = FMath::Clamp(MaxSide, 32, 256);
+	const int32 Width = FMath::Clamp(FMath::RoundToInt(Side * Spec.WidthCm / Long), 16, Side);
+	const int32 Height = FMath::Clamp(FMath::RoundToInt(Side * Spec.HeightCm / Long), 16, Side);
+	const float HalfW = Width * 0.5f;
+	const float HalfH = Height * 0.5f;
+	const float Radius = FMath::Max(1.0f, FMath::Min(HalfW, HalfH) * 2.0f * Spec.CornerFraction);
+
+	// Folder glyph geometry, in pixels from the texture centre (Y down).
+	const float GlyphW = Width * 0.30f;
+	const float GlyphH = GlyphW * 0.74f;
+	const float GlyphCenterY = -HalfH + Height * 0.18f + GlyphH * 0.5f;
+
+	return PaintTexture(Width, Height, [&](int32 X, int32 Y)
+	{
+		const float Px = X + 0.5f - HalfW;
+		const float Py = Y + 0.5f - HalfH;
+		const float Sdf = GlassFrost_RoundedBoxSdf(Px, Py, HalfW, HalfH, Radius);
+		// One pixel of anti-aliasing on the outer edge.
+		const float Coverage = FMath::Clamp(0.5f - Sdf, 0.0f, 1.0f);
+		if (Coverage <= 0.0f)
+		{
+			return FColor(0, 0, 0, 0);
+		}
+
+		const float Depth = -Sdf; // pixels inside the edge
+		const float RimBlend = 1.0f - FMath::Clamp((Depth - 0.5f) / FMath::Max(Spec.RimPixels, 0.5f), 0.0f, 1.0f);
+		float Alpha = FMath::Lerp(Spec.BodyAlpha, Spec.RimAlpha, RimBlend * RimBlend);
+		FLinearColor Color = FMath::Lerp(Spec.Tint, Spec.RimTint, RimBlend);
+
+		// Faint sheen across the top half, strongest at the top edge.
+		const float V = static_cast<float>(Y) / static_cast<float>(Height - 1);
+		if (V < 0.5f)
+		{
+			const float Sheen = 1.0f - V / 0.5f;
+			Alpha += Spec.SheenAlpha * Sheen * Sheen;
+		}
+
+		if (Spec.bFolderGlyph)
+		{
+			// Body + tab, drawn as two rounded boxes in the glyph's own pixel space.
+			const float Gy = Py - GlyphCenterY;
+			const float Body = GlassFrost_RoundedBoxSdf(Px, Gy + GlyphH * 0.10f, GlyphW * 0.5f, GlyphH * 0.40f, GlyphH * 0.10f);
+			const float Tab = GlassFrost_RoundedBoxSdf(Px + GlyphW * 0.20f, Gy - GlyphH * 0.40f, GlyphW * 0.20f, GlyphH * 0.12f, GlyphH * 0.06f);
+			const float Glyph = FMath::Clamp(0.5f - FMath::Min(Body, Tab), 0.0f, 1.0f);
+			Alpha = FMath::Lerp(Alpha, FMath::Max(Alpha, 0.55f), Glyph);
+			Color = FMath::Lerp(Color, Spec.RimTint, Glyph);
+		}
+
+		Color.A = FMath::Clamp(Alpha * Coverage, 0.0f, 1.0f);
+		return Color.ToFColor(true);
+	});
+}
+
+UMaterialInstanceDynamic* MakeTranslucentMaterial(UMaterialInterface* Base, UTexture2D* Texture, UObject* Outer)
+{
+	UMaterialInterface* SafeBase = Base ? Base : LoadGlassTranslucentMaterial();
+	if (!SafeBase || !Texture)
+	{
+		return nullptr;
+	}
+
+	UMaterialInstanceDynamic* Instance = UMaterialInstanceDynamic::Create(SafeBase, Outer);
+	if (Instance)
+	{
+		Instance->SetTextureParameterValue(TEXT("SlateUI"), Texture);
+	}
+	return Instance;
 }
 } // namespace MemoryRoomUI

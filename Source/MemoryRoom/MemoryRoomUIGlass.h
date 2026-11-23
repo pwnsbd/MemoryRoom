@@ -42,4 +42,33 @@ namespace MemoryRoomUI
 	MEMORYROOM_API UMaterialInstanceDynamic* MakeSolidMaterial(UMaterialInterface* Base, const FLinearColor& Color, UObject* Outer);
 	// The slab: Style.PanelColor at the top down to Style.GlassGlowColor at the bottom.
 	MEMORYROOM_API UMaterialInstanceDynamic* MakeGlassMaterial(UMaterialInterface* Base, const FMemoryRoomWristUIStyle& Style, UObject* Outer, bool bFlip = false);
+
+	// --- Frosted glass panels (settings board + folder window) ---
+	// A rounded-rectangle RGBA texture: soft body, brighter rim, faint top sheen. Painted once
+	// per style, never per frame. Fixed warm look - deliberately not read from the theme.
+	struct FGlassPanelSpec
+	{
+		// Physical size in cm; only the aspect matters (the long side is painted at MaxSide).
+		float WidthCm = 10.0f;
+		float HeightCm = 10.0f;
+		FLinearColor Tint = FLinearColor(1.0f, 0.97f, 0.92f);
+		FLinearColor RimTint = FLinearColor(1.0f, 0.98f, 0.94f);
+		float BodyAlpha = 0.12f;
+		float RimAlpha = 0.30f;
+		float RimPixels = 1.5f;
+		float SheenAlpha = 0.07f;
+		// Corner radius as a fraction of the short side.
+		float CornerFraction = 0.06f;
+		// Paints a small folder icon in the upper middle (folder tiles).
+		bool bFolderGlyph = false;
+	};
+
+	// Translucent, unlit, one texture parameter ("SlateUI") carrying colour + alpha - the
+	// material UWidgetComponent uses for its translucent 3D widgets.
+	MEMORYROOM_API const TCHAR* GlassTranslucentMaterialPath();
+	MEMORYROOM_API UMaterialInterface* LoadGlassTranslucentMaterial();
+
+	MEMORYROOM_API UTexture2D* MakeFrostedPanelTexture(const FGlassPanelSpec& Spec, int32 MaxSide = 256);
+	// Dynamic instance of the translucent base with Texture bound to "SlateUI".
+	MEMORYROOM_API UMaterialInstanceDynamic* MakeTranslucentMaterial(UMaterialInterface* Base, UTexture2D* Texture, UObject* Outer);
 }

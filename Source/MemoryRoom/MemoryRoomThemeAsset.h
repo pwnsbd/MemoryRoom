@@ -4,6 +4,7 @@
 
 #include "CoreMinimal.h"
 #include "Engine/DataAsset.h"
+#include "MemoryRoomDustActor.h" // EMemoryRoomMoteStyle
 #include "MemoryRoomSkyDomeActor.h" // FMemoryRoomSkyPreset
 #include "MemoryRoomThemeAsset.generated.h"
 
@@ -146,6 +147,10 @@ public:
 	// Multiplier tint pushed onto the dust motes' material.
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Theme|Dust")
 	FLinearColor DustTint = FLinearColor(1.0f, 1.0f, 1.0f, 1.0f);
+
+	// Dust (fireflies) or Leaf (wind-blown leaves). Default Dust leaves existing themes unchanged.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Theme|Dust")
+	EMemoryRoomMoteStyle MoteStyle = EMemoryRoomMoteStyle::Dust;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Theme|Audio")
 	FMemoryRoomAudioTheme Audio;

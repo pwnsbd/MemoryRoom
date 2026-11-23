@@ -37,14 +37,9 @@ constexpr float ActionRowPitchZ = 9.0f;     // 5 cm between stacked action targe
 constexpr float SettingsToActionsZ = 6.0f;  // holds the actions clear of the settings block
 constexpr float LabelOffsetZ = 4.8f;        // the setting name sits above its own buttons
 constexpr float PanelMargin = 4.0f;
-constexpr float PanelThickness = 1.2f;      // the glass slab
-constexpr float PanelDepthX = 0.4f;         // slab centre; its front face is toward -X
-constexpr float WidgetDepthX = -2.2f;       // tiles float just in front of the slab
-constexpr float TileThickness = 0.6f;
-constexpr float RuleDepthX = -1.4f;
-constexpr float RuleThickness = 0.3f;
-constexpr float RuleHeight = 0.22f;         // hairline
-constexpr float TextDepthX = WidgetDepthX - 0.6f;
+constexpr float PanelDepthX = -0.6f;        // glass board plane; its face looks toward -X
+constexpr float WidgetDepthX = -1.6f;       // chips float just in front of the board
+constexpr float TextDepthX = WidgetDepthX - 0.9f;
 constexpr float TilePopLiftX = 0.6f;        // a hot tile comes this much closer
 constexpr float LabelSize = 2.0f;
 constexpr float ValueSize = 2.6f;
@@ -55,10 +50,53 @@ constexpr float StatusSize = 2.4f;
 constexpr int32 SettingColumns = 2;
 constexpr int32 ActionColumns = 2;
 
+// Folder window layout, in cm, in the window's own frame (content on -X, +Y to the viewer's
+// right, +Z up, origin at the window centre). Named GlassMenu_ so the file-local constants do
+// not clash in a unity build.
+constexpr float GlassMenu_WinWidth = 52.0f;
+constexpr float GlassMenu_WinHeight = 46.0f;
+constexpr float GlassMenu_WinPanelX = -0.6f;
+constexpr float GlassMenu_WinChipX = -1.6f;
+constexpr float GlassMenu_WinTextX = -2.5f;
+constexpr float GlassMenu_WinBoxX = -2.8f;
+constexpr float GlassMenu_WinBarZ = 17.5f;       // top bar: Up, breadcrumb, close
+constexpr float GlassMenu_WinHintZ = 13.0f;
+constexpr float GlassMenu_WinBottomZ = -17.5f;   // bottom bar: page arrows, Use this folder
+constexpr float GlassMenu_WinSideY = 21.0f;
+constexpr float GlassMenu_WinPageGapY = 7.0f;
+constexpr float GlassMenu_WinPageTextY = -14.0f;
+constexpr float GlassMenu_WinUseY = 17.0f;
+constexpr float GlassMenu_WinBtnHalf = 2.0f;
+constexpr float GlassMenu_WinTileW = 14.0f;
+constexpr float GlassMenu_WinTileH = 10.0f;
+constexpr int32 GlassMenu_WinTileCount = 6;
+constexpr int32 GlassMenu_WinColumns = 3;
+constexpr float GlassMenu_WinColPitchY = 16.0f;
+constexpr float GlassMenu_WinRowZ0 = 6.0f;
+constexpr float GlassMenu_WinRowPitchZ = 12.0f;
+constexpr float GlassMenu_WinPathSize = 2.0f;
+constexpr float GlassMenu_WinHintSize = 1.6f;
+constexpr float GlassMenu_WinEmptySize = 2.2f;
+constexpr float GlassMenu_WinNameSize = 1.8f;
+constexpr float GlassMenu_WinCountSize = 1.4f;
+constexpr int32 GlassMenu_NameMaxChars = 11;
+constexpr int32 GlassMenu_PathMaxChars = 32;
+constexpr float GlassMenu_PendingSeconds = 4.0f;  // "looking for folders" before "none found"
+constexpr float GlassMenu_FolderStartScale = 0.85f;
+
 float EaseOutCubic(float T)
 {
 	const float Clamped = FMath::Clamp(T, 0.0f, 1.0f);
 	return 1.0f - FMath::Pow(1.0f - Clamped, 3.0f);
+}
+
+FString GlassMenu_Truncate(const FString& Text, int32 MaxChars)
+{
+	if (Text.Len() <= MaxChars)
+	{
+		return Text;
+	}
+	return Text.Left(FMath::Max(1, MaxChars - 1)) + FString::Chr(0x2026);
 }
 }
 
@@ -75,16 +113,16 @@ AMemoryRoomMenuActor::AMemoryRoomMenuActor()
 
 void AMemoryRoomMenuActor::BuildBoard()
 {
-	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeFinder(TEXT("/Engine/BasicShapes/Cube.Cube"));
-	static ConstructorHelpers::FObjectFinder<UMaterialInterface> GlassFinder(MemoryRoomUI::GlassBaseMaterialPath());
-	UStaticMesh* Cube = CubeFinder.Succeeded() ? CubeFinder.Object : nullptr;
+	static ConstructorHelpers::FObjectFinder<UStaticMesh> PlaneFinder(TEXT("/Engine/BasicShapes/Plane.Plane"));
+	static ConstructorHelpers::FObjectFinder<UMaterialInterface> GlassFinder(MemoryRoomUI::GlassTranslucentMaterialPath());
+	UStaticMesh* Plane = PlaneFinder.Succeeded() ? PlaneFinder.Object : nullptr;
 	if (GlassFinder.Succeeded())
 	{
-		GlassBaseMaterial = GlassFinder.Object;
+		GlassTranslucentMaterial = GlassFinder.Object;
 	}
 
 	const int32 SettingCount = static_cast<int32>(EMemoryRoomUserSetting::Count);
-	const EMemoryRoomMenuAction Actions[] = { EMemoryRoomMenuAction::ResetView, EMemoryRoomMenuAction::JumpToNewest, EMemoryRoomMenuAction::ReloadPhotos, EMemoryRoomMenuAction::Close };
+	const EMemoryRoomMenuAction Actions[] = { EMemoryRoomMenuAction::ResetView, EMemoryRoomMenuAction::JumpToNewest, EMemoryRoomMenuAction::ReloadPhotos, EMemoryRoomMenuAction::ChoosePhotoSource, EMemoryRoomMenuAction::Close };
 	const int32 ActionCount = UE_ARRAY_COUNT(Actions);
 
 	const int32 SettingRows = FMath::DivideAndRoundUp(SettingCount, SettingColumns);
@@ -99,8 +137,6 @@ void AMemoryRoomMenuActor::BuildBoard()
 	const float ActionsTopZ = SettingsBottomZ - SettingsToActionsZ - PressHalfZ;
 	const float ActionsBottomZ = ActionsTopZ - (ActionRows - 1) * ActionRowPitchZ - PressHalfZ;
 	const float TitleZ = LabelOffsetZ + LabelSize * 0.5f + TitleSize * 1.1f;
-	const float TitleRuleZ = TitleZ - TitleSize * 0.8f;
-	const float SectionRuleZ = SettingsBottomZ - SettingsToActionsZ * 0.5f;
 	const float StatusZ = ActionsBottomZ - StatusSize * 1.8f;
 	const float ContentTopZ = TitleZ + TitleSize * 0.5f;
 	const float ContentBottomZ = StatusZ - StatusSize * 0.5f;
@@ -108,7 +144,8 @@ void AMemoryRoomMenuActor::BuildBoard()
 
 	const float PanelWidth = ColumnPitchY + 2.0f * TileHalfY + 2.0f * PanelMargin;
 	const float PanelHeight = (ContentTopZ - ContentBottomZ) + 2.0f * PanelMargin;
-	const float RuleWidth = PanelWidth - 2.0f * PanelMargin - 6.0f;
+	BoardPanelWidthCm = PanelWidth;
+	BoardPanelHeightCm = PanelHeight;
 
 	// Column 0 is the viewer's left: the widgets carry a 180-degree yaw to face the player,
 	// which makes +Y the reading direction and so the viewer's right.
@@ -117,33 +154,57 @@ void AMemoryRoomMenuActor::BuildBoard()
 		return (Column - (ColumnCount - 1) * 0.5f) * ColumnPitchY;
 	};
 
-	auto MakeSlab = [this, Cube](const TCHAR* Name, float X, float Y, float Z, float Depth, float Width, float Height) -> UStaticMeshComponent*
+	// A flat glass face. The engine plane lies in XY with its normal +Z; pitching it 90 degrees
+	// stands it up with the normal on -X (toward the viewer, like every widget on this board),
+	// its local X running up and local Y running to the viewer's right. Scale is (height, width).
+	auto MakeFace = [this, Plane](const FString& Name, USceneComponent* Parent, const FVector& Location, float Width, float Height, int32 SortPriority) -> UStaticMeshComponent*
 	{
-		UStaticMeshComponent* Slab = CreateDefaultSubobject<UStaticMeshComponent>(Name);
-		Slab->SetupAttachment(SceneRoot);
-		Slab->SetStaticMesh(Cube);
-		Slab->SetRelativeLocation(FVector(X, Y, Z));
-		Slab->SetRelativeScale3D(FVector(Depth / 100.0f, Width / 100.0f, Height / 100.0f));
-		Slab->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-		Slab->SetCastShadow(false);
-		Slab->bCastDynamicShadow = false;
-		Slab->bReceivesDecals = false;
-		return Slab;
+		UStaticMeshComponent* Face = CreateDefaultSubobject<UStaticMeshComponent>(*Name);
+		Face->SetupAttachment(Parent);
+		Face->SetStaticMesh(Plane);
+		Face->SetRelativeLocation(Location);
+		Face->SetRelativeRotation(FRotator(90.0f, 0.0f, 0.0f));
+		Face->SetRelativeScale3D(FVector(Height / 100.0f, Width / 100.0f, 1.0f));
+		Face->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Face->SetCastShadow(false);
+		Face->bCastDynamicShadow = false;
+		Face->bReceivesDecals = false;
+		Face->SetTranslucentSortPriority(SortPriority);
+		GlassFaces.Add(Face);
+		return Face;
+	};
+	auto MakeTextAt = [this](const FString& Name, USceneComponent* Parent, const FVector& Location, float Size, float Tracking) -> UTextRenderComponent*
+	{
+		UTextRenderComponent* Text = CreateDefaultSubobject<UTextRenderComponent>(*Name);
+		Text->SetupAttachment(Parent);
+		Text->SetRelativeLocation(Location);
+		Text->SetRelativeRotation(FRotator(0.0f, 180.0f, 0.0f));
+		Text->SetHorizontalAlignment(EHTA_Center);
+		Text->SetVerticalAlignment(EVRTA_TextCenter);
+		Text->SetTextRenderColor(LabelColor);
+		Text->SetWorldSize(Size);
+		Text->SetHorizSpacingAdjust(Tracking);
+		Text->SetCastShadow(false);
+		return Text;
+	};
+	auto MakeBoxAt = [this](const FString& Name, USceneComponent* Parent, const FVector& Location, const FVector& Extent) -> UBoxComponent*
+	{
+		UBoxComponent* Box = CreateDefaultSubobject<UBoxComponent>(*Name);
+		Box->SetupAttachment(Parent);
+		Box->SetRelativeLocation(Location);
+		Box->SetBoxExtent(Extent);
+		Box->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
+		Box->SetCollisionResponseToAllChannels(ECR_Ignore);
+		Box->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
+		return Box;
 	};
 
-	// Dark backing board (a little bigger, so an edge shows), then the cream page in front of
-	// it, then the clip across the top.
+	// The frosted board, then the rows' chips float just in front of it.
 	const float ContentMidZ = (ContentTopZ + ContentBottomZ) * 0.5f + BaseAnchorShiftZ;
-	BackgroundPanel = MakeSlab(TEXT("BackgroundPanel"), PanelDepthX, 0.0f, ContentMidZ, PanelThickness, PanelWidth + 5.0f, PanelHeight + 5.0f);
-	PaperPanel = MakeSlab(TEXT("PaperPanel"), PanelDepthX - 0.9f, 0.0f, ContentMidZ, 0.5f, PanelWidth, PanelHeight);
-	ClipPanel = MakeSlab(TEXT("ClipPanel"), PanelDepthX - 1.7f, 0.0f, ContentTopZ + PanelMargin + BaseAnchorShiftZ + 0.5f, 1.1f, 15.0f, 2.4f);
+	BackgroundPanel = MakeFace(TEXT("BackgroundPanel"), SceneRoot, FVector(PanelDepthX, 0.0f, ContentMidZ), PanelWidth, PanelHeight, 0);
 
-	TitleRule = MakeSlab(TEXT("TitleRule"), RuleDepthX, 0.0f, TitleRuleZ + BaseAnchorShiftZ, RuleThickness, RuleWidth, RuleHeight);
-	SectionRule = MakeSlab(TEXT("SectionRule"), RuleDepthX, 0.0f, SectionRuleZ + BaseAnchorShiftZ, RuleThickness, RuleWidth * 0.55f, RuleHeight);
-
-	// The page and board are unlit, but the text render components use the engine's stock
-	// (lit) font material - a small warm light on the panel keeps the dark ink from going flat
-	// black at night and gives the paper a faint reading-lamp warmth.
+	// The glass is unlit, but the text render components use the engine's stock (lit) font
+	// material - a small warm light on the panel keeps the text from going flat at night.
 	BoardLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("BoardLight"));
 	BoardLight->SetupAttachment(SceneRoot);
 	BoardLight->SetRelativeLocation(FVector(TextDepthX - 10.0f, 0.0f, ContentMidZ));
@@ -155,34 +216,17 @@ void AMemoryRoomMenuActor::BuildBoard()
 	BoardLight->SetIntensity(5.0f);
 	BoardLight->SetLightColor(FLinearColor(1.0f, 0.95f, 0.86f));
 
-	auto MakeBox = [this](const FString& Name, float Y, float Z, float HalfY) -> UBoxComponent*
+	auto MakeBox = [this, MakeBoxAt](const FString& Name, float Y, float Z, float HalfY) -> UBoxComponent*
 	{
-		UBoxComponent* Box = CreateDefaultSubobject<UBoxComponent>(*Name);
-		Box->SetupAttachment(SceneRoot);
-		Box->SetRelativeLocation(FVector(WidgetDepthX - PressHalfX, Y, Z));
-		Box->SetBoxExtent(FVector(PressHalfX, HalfY, PressHalfZ));
-		Box->SetCollisionEnabled(ECollisionEnabled::QueryOnly);
-		Box->SetCollisionResponseToAllChannels(ECR_Ignore);
-		Box->SetCollisionResponseToChannel(ECC_Visibility, ECR_Block);
-		return Box;
+		return MakeBoxAt(Name, SceneRoot, FVector(WidgetDepthX - PressHalfX, Y, Z), FVector(PressHalfX, HalfY, PressHalfZ));
 	};
-	auto MakePanel = [MakeSlab](const FString& Name, float Y, float Z, float HalfY) -> UStaticMeshComponent*
+	auto MakePanel = [this, MakeFace](const FString& Name, float Y, float Z, float HalfY) -> UStaticMeshComponent*
 	{
-		return MakeSlab(*Name, WidgetDepthX, Y, Z, TileThickness, HalfY * 2.0f, PressHalfZ * 2.0f);
+		return MakeFace(Name, SceneRoot, FVector(WidgetDepthX, Y, Z), HalfY * 2.0f, PressHalfZ * 2.0f, 1);
 	};
-	auto MakeText = [this](const FString& Name, float Y, float Z, float Size, float Tracking) -> UTextRenderComponent*
+	auto MakeText = [this, MakeTextAt](const FString& Name, float Y, float Z, float Size, float Tracking) -> UTextRenderComponent*
 	{
-		UTextRenderComponent* Text = CreateDefaultSubobject<UTextRenderComponent>(*Name);
-		Text->SetupAttachment(SceneRoot);
-		Text->SetRelativeLocation(FVector(TextDepthX, Y, Z));
-		Text->SetRelativeRotation(FRotator(0.0f, 180.0f, 0.0f));
-		Text->SetHorizontalAlignment(EHTA_Center);
-		Text->SetVerticalAlignment(EVRTA_TextCenter);
-		Text->SetTextRenderColor(LabelColor);
-		Text->SetWorldSize(Size);
-		Text->SetHorizSpacingAdjust(Tracking);
-		Text->SetCastShadow(false);
-		return Text;
+		return MakeTextAt(Name, SceneRoot, FVector(TextDepthX, Y, Z), Size, Tracking);
 	};
 
 	TitleText = MakeText(TEXT("TitleText"), 0.0f, TitleZ + BaseAnchorShiftZ, TitleSize, LabelTracking * 2.0f);
@@ -232,6 +276,72 @@ void AMemoryRoomMenuActor::BuildBoard()
 		Row.Label = MakeText(Tag + TEXT("Label"), TileY, TileZ, ActionSize, LabelTracking);
 		Rows.Add(Row);
 	}
+
+	// --- Folder window ---
+	// A separate glass panel with its own root. The root is absolute (it ignores the board's
+	// transform and scale) and is placed in front of the view when the window opens. Local axes
+	// match the board: content on the -X face, +Y to the viewer's right, +Z up.
+	FolderRoot = CreateDefaultSubobject<USceneComponent>(TEXT("FolderWindowRoot"));
+	FolderRoot->SetupAttachment(SceneRoot);
+	FolderRoot->SetUsingAbsoluteLocation(true);
+	FolderRoot->SetUsingAbsoluteRotation(true);
+	FolderRoot->SetUsingAbsoluteScale(true);
+
+	BrowserPanel = MakeFace(TEXT("FolderWindowPanel"), FolderRoot, FVector(GlassMenu_WinPanelX, 0.0f, 0.0f), GlassMenu_WinWidth, GlassMenu_WinHeight, 10);
+
+	FolderLight = CreateDefaultSubobject<UPointLightComponent>(TEXT("FolderLight"));
+	FolderLight->SetupAttachment(FolderRoot);
+	FolderLight->SetRelativeLocation(FVector(GlassMenu_WinTextX - 14.0f, 0.0f, 0.0f));
+	FolderLight->SetMobility(EComponentMobility::Movable);
+	FolderLight->SetCastShadows(false);
+	FolderLight->bAffectsWorld = true;
+	FolderLight->SetIntensityUnits(ELightUnits::Unitless);
+	FolderLight->SetAttenuationRadius(110.0f);
+	FolderLight->SetIntensity(5.0f);
+	FolderLight->SetLightColor(FLinearColor(1.0f, 0.95f, 0.86f));
+
+	BrowserPathText = MakeTextAt(TEXT("FwPath"), FolderRoot, FVector(GlassMenu_WinTextX, 0.0f, GlassMenu_WinBarZ), GlassMenu_WinPathSize, 0.0f);
+	BrowserHintText = MakeTextAt(TEXT("FwHint"), FolderRoot, FVector(GlassMenu_WinTextX, 0.0f, GlassMenu_WinHintZ), GlassMenu_WinHintSize, 0.0f);
+	BrowserHintText->SetTextRenderColor(DimLabelColor);
+	BrowserPageText = MakeTextAt(TEXT("FwPage"), FolderRoot, FVector(GlassMenu_WinTextX, GlassMenu_WinPageTextY, GlassMenu_WinBottomZ), GlassMenu_WinPathSize, 0.0f);
+	BrowserEmptyText = MakeTextAt(TEXT("FwEmpty"), FolderRoot, FVector(GlassMenu_WinTextX, 0.0f, 0.0f), GlassMenu_WinEmptySize, 0.0f);
+	BrowserEmptyText->SetTextRenderColor(DimLabelColor);
+
+	auto MakeWindowButton = [this, MakeFace, MakeTextAt, MakeBoxAt](const TCHAR* Tag, float Y, float Z, float HalfY, float HalfZ, float TextSize, const TCHAR* Caption, bool bPrimary) -> FMemoryRoomFolderButton
+	{
+		const FString Name(Tag);
+		FMemoryRoomFolderButton Button;
+		Button.HalfY = HalfY;
+		Button.HalfZ = HalfZ;
+		Button.bPrimary = bPrimary;
+		Button.Box = MakeBoxAt(Name + TEXT("Box"), FolderRoot, FVector(GlassMenu_WinBoxX, Y, Z), FVector(PressHalfX, HalfY, HalfZ));
+		Button.Panel = MakeFace(Name + TEXT("Panel"), FolderRoot, FVector(GlassMenu_WinChipX, Y, Z), HalfY * 2.0f, HalfZ * 2.0f, 11);
+		Button.Label = MakeTextAt(Name + TEXT("Text"), FolderRoot, FVector(GlassMenu_WinTextX, Y, Z), TextSize, 0.0f);
+		Button.Label->SetText(FText::FromString(Caption));
+		return Button;
+	};
+	BrowserUp = MakeWindowButton(TEXT("FwUp"), -GlassMenu_WinSideY, GlassMenu_WinBarZ, GlassMenu_WinBtnHalf, GlassMenu_WinBtnHalf, 1.6f, TEXT("UP"), false);
+	BrowserClose = MakeWindowButton(TEXT("FwClose"), GlassMenu_WinSideY, GlassMenu_WinBarZ, GlassMenu_WinBtnHalf, GlassMenu_WinBtnHalf, 2.6f, TEXT("X"), false);
+	BrowserPrev = MakeWindowButton(TEXT("FwPrev"), -GlassMenu_WinSideY, GlassMenu_WinBottomZ, GlassMenu_WinBtnHalf, GlassMenu_WinBtnHalf, 2.6f, TEXT("<"), false);
+	BrowserNext = MakeWindowButton(TEXT("FwNext"), -GlassMenu_WinSideY + 2.0f * GlassMenu_WinPageGapY, GlassMenu_WinBottomZ, GlassMenu_WinBtnHalf, GlassMenu_WinBtnHalf, 2.6f, TEXT(">"), false);
+	BrowserUse = MakeWindowButton(TEXT("FwUse"), GlassMenu_WinUseY, GlassMenu_WinBottomZ, TileHalfY, GlassMenu_WinBtnHalf, 1.7f, TEXT("USE THIS FOLDER"), true);
+
+	for (int32 i = 0; i < GlassMenu_WinTileCount; ++i)
+	{
+		const int32 Col = i % GlassMenu_WinColumns;
+		const int32 Row = i / GlassMenu_WinColumns;
+		const float Y = (Col - (GlassMenu_WinColumns - 1) * 0.5f) * GlassMenu_WinColPitchY;
+		const float Z = GlassMenu_WinRowZ0 - Row * GlassMenu_WinRowPitchZ;
+		const FString Tag = FString::Printf(TEXT("FwTile%d"), i);
+		FMemoryRoomFolderTile Tile;
+		Tile.Box = MakeBoxAt(Tag + TEXT("Box"), FolderRoot, FVector(GlassMenu_WinBoxX, Y, Z), FVector(PressHalfX, GlassMenu_WinTileW * 0.5f, GlassMenu_WinTileH * 0.5f));
+		Tile.Panel = MakeFace(Tag + TEXT("Panel"), FolderRoot, FVector(GlassMenu_WinChipX, Y, Z), GlassMenu_WinTileW, GlassMenu_WinTileH, 11);
+		Tile.Text = MakeTextAt(Tag + TEXT("Name"), FolderRoot, FVector(GlassMenu_WinTextX, Y, Z - 1.6f), GlassMenu_WinNameSize, 0.0f);
+		Tile.Detail = MakeTextAt(Tag + TEXT("Count"), FolderRoot, FVector(GlassMenu_WinTextX, Y, Z - 3.5f), GlassMenu_WinCountSize, 0.0f);
+		Tile.Detail->SetTextRenderColor(DimLabelColor);
+		FolderTiles.Add(Tile);
+	}
+	SetFolderBrowserVisible(false);
 }
 
 void AMemoryRoomMenuActor::ApplyBoardScale()
@@ -264,6 +374,19 @@ void AMemoryRoomMenuActor::BeginPlay()
 		MemoryRoomManager->OnPhotoLibraryReloadStarted.AddDynamic(this, &AMemoryRoomMenuActor::HandleReloadStarted);
 		MemoryRoomManager->OnPhotoLibraryReloadCompleted.AddDynamic(this, &AMemoryRoomMenuActor::HandleReloadCompleted);
 	}
+	// Manager actors may spawn this board before restoring SaveGame settings. Check on the
+	// next tick so a returning user with a saved source does not see onboarding again.
+	if (GetWorld())
+	{
+		GetWorld()->GetTimerManager().SetTimerForNextTick(FTimerDelegate::CreateWeakLambda(this, [this]()
+		{
+			if (MemoryRoomManager && !MemoryRoomManager->HasPhotoSourceChoice())
+			{
+				StatusMessage = TEXT("Choose a photo folder to begin.");
+				OpenMenu();
+			}
+		}));
+	}
 
 	if (!bStyled)
 	{
@@ -287,6 +410,13 @@ void AMemoryRoomMenuActor::PositionMenuInFrontOfView()
 	if (!Forward.Normalize())
 	{
 		Forward = FVector::ForwardVector;
+	}
+
+	// While the folder window is up the board slides aside (yawed round the viewer) so the two
+	// do not overlap; it comes back to dead ahead when the window closes.
+	if (bFolderBrowserOpen)
+	{
+		Forward = FRotator(0.0f, BoardYawWhenFolderOpenDegrees, 0.0f).RotateVector(Forward);
 	}
 
 	const FVector Location = ViewLocation + Forward * FMath::Max(SummonDistanceCm, 30.0f) + FVector(0.0f, 0.0f, SummonHeightOffsetCm);
@@ -566,7 +696,7 @@ void AMemoryRoomMenuActor::TickOpenAnimation(float DeltaSeconds)
 	}
 }
 
-void AMemoryRoomMenuActor::ApplyTilePop(UStaticMeshComponent* Panel, float HalfY, float Blend) const
+void AMemoryRoomMenuActor::ApplyTilePop(UStaticMeshComponent* Panel, float RestX, float HalfY, float HalfZ, float Blend) const
 {
 	if (!Panel)
 	{
@@ -576,8 +706,9 @@ void AMemoryRoomMenuActor::ApplyTilePop(UStaticMeshComponent* Panel, float HalfY
 	const float Eased = 1.0f - FMath::Square(1.0f - FMath::Clamp(Blend, 0.0f, 1.0f));
 	const float Grow = 1.0f + FMath::Max(TileHoverPop, 0.0f) * Eased;
 	const FVector Location = Panel->GetRelativeLocation();
-	Panel->SetRelativeLocation(FVector(WidgetDepthX - TilePopLiftX * Eased, Location.Y, Location.Z));
-	Panel->SetRelativeScale3D(FVector(TileThickness / 100.0f, HalfY * 2.0f * Grow / 100.0f, PressHalfZ * 2.0f * Grow / 100.0f));
+	Panel->SetRelativeLocation(FVector(RestX - TilePopLiftX * Eased, Location.Y, Location.Z));
+	// Glass faces are planes standing up on local X (height) and Y (width).
+	Panel->SetRelativeScale3D(FVector(HalfZ * 2.0f * Grow / 100.0f, HalfY * 2.0f * Grow / 100.0f, 1.0f));
 }
 
 void AMemoryRoomMenuActor::TickHoverAnimation(float DeltaSeconds)
@@ -608,12 +739,65 @@ void AMemoryRoomMenuActor::TickHoverAnimation(float DeltaSeconds)
 	{
 		if (Settle(Row.MinusHoverBlend, Hovered == Row.MinusBox))
 		{
-			ApplyTilePop(Row.MinusPanel, Row.TileHalfY, Row.MinusHoverBlend);
+			ApplyTilePop(Row.MinusPanel, WidgetDepthX, Row.TileHalfY, PressHalfZ, Row.MinusHoverBlend);
 		}
 		if (Row.PlusPanel && Settle(Row.PlusHoverBlend, Hovered == Row.PlusBox))
 		{
-			ApplyTilePop(Row.PlusPanel, Row.TileHalfY, Row.PlusHoverBlend);
+			ApplyTilePop(Row.PlusPanel, WidgetDepthX, Row.TileHalfY, PressHalfZ, Row.PlusHoverBlend);
 		}
+	}
+	if (bFolderBrowserOpen)
+	{
+		for (FMemoryRoomFolderTile& Tile : FolderTiles)
+		{
+			if (Settle(Tile.HoverBlend, Hovered == Tile.Box))
+			{
+				ApplyTilePop(Tile.Panel, GlassMenu_WinChipX, GlassMenu_WinTileW * 0.5f, GlassMenu_WinTileH * 0.5f, Tile.HoverBlend);
+			}
+		}
+		for (FMemoryRoomFolderButton* Button : { &BrowserUp, &BrowserClose, &BrowserPrev, &BrowserNext, &BrowserUse })
+		{
+			if (Settle(Button->HoverBlend, Hovered == Button->Box))
+			{
+				ApplyTilePop(Button->Panel, GlassMenu_WinChipX, Button->HalfY, Button->HalfZ, Button->HoverBlend);
+			}
+		}
+	}
+}
+
+void AMemoryRoomMenuActor::ApplyFolderWindowScale()
+{
+	if (FolderRoot)
+	{
+		const float Grow = FMath::Lerp(GlassMenu_FolderStartScale, 1.0f, EaseOutCubic(FolderProgress));
+		FolderRoot->SetWorldScale3D(FVector(Grow));
+	}
+}
+
+void AMemoryRoomMenuActor::TickFolderWindow(float DeltaSeconds)
+{
+	const float Target = bFolderBrowserOpen ? 1.0f : 0.0f;
+	if (!FMath::IsNearlyEqual(FolderProgress, Target))
+	{
+		const float Duration = FMath::Max(OpenAnimationSeconds, 0.0f);
+		const float Step = Duration > KINDA_SMALL_NUMBER ? DeltaSeconds / Duration : 1.0f;
+		FolderProgress = FMath::Clamp(FolderProgress + (bFolderBrowserOpen ? Step : -Step), 0.0f, 1.0f);
+		ApplyFolderWindowScale();
+	}
+
+	if (!bFolderBrowserOpen || !MemoryRoomManager)
+	{
+		return;
+	}
+
+	// The MediaStore query answers asynchronously: repaint when the folder list changes, and
+	// once more when the "looking for folders" grace period runs out.
+	const int32 AlbumCount = MemoryRoomManager->GetPhotoAlbums().Num();
+	const bool bPendingExpired = bBrowserPendingShown && GetWorld()
+		&& (GetWorld()->GetTimeSeconds() - BrowserOpenedSeconds) >= GlassMenu_PendingSeconds;
+	if (AlbumCount != BrowserLastAlbumCount || bPendingExpired)
+	{
+		RefreshFolderBrowser();
 	}
 }
 
@@ -622,6 +806,7 @@ void AMemoryRoomMenuActor::Tick(float DeltaSeconds)
 	Super::Tick(DeltaSeconds);
 	TickOpenAnimation(DeltaSeconds);
 	TickHoverAnimation(DeltaSeconds);
+	TickFolderWindow(DeltaSeconds);
 }
 
 void AMemoryRoomMenuActor::BindInput()
@@ -651,12 +836,20 @@ void AMemoryRoomMenuActor::OpenMenu()
 	SetOtherWristButtonsHidden(true);
 	ApplyBoardScale();
 	RefreshText();
+	if (MemoryRoomManager && !MemoryRoomManager->HasPhotoSourceChoice()) OpenFolderBrowser();
 }
 
 void AMemoryRoomMenuActor::CloseMenu()
 {
 	bMenuOpen = false;
 	HoveredComponent.Reset();
+	// The folder window goes with the board.
+	if (bFolderBrowserOpen)
+	{
+		bFolderBrowserOpen = false;
+		FolderProgress = 0.0f;
+		SetFolderBrowserVisible(false);
+	}
 	// Collision off at once so nothing is pressed mid scale-out; TickOpenAnimation hides the
 	// actor when the scale-out lands.
 	SetActorEnableCollision(false);
@@ -694,6 +887,8 @@ void AMemoryRoomMenuActor::SetOtherWristButtonsHidden(bool bShouldHide)
 bool AMemoryRoomMenuActor::IsMenuComponent(const UPrimitiveComponent* Component) const
 {
 	if (!bMenuOpen || !Component) return false;
+	// The folder window is a separate panel; the board stays live beside it.
+	if (bFolderBrowserOpen && IsFolderWindowComponent(Component)) return true;
 	if (Component == BackgroundPanel) return true;
 	for (const FMemoryRoomMenuRow& Row : Rows)
 	{
@@ -722,9 +917,19 @@ void AMemoryRoomMenuActor::SetHoveredComponent(UPrimitiveComponent* Component)
 bool AMemoryRoomMenuActor::PressHoveredButton()
 {
 	bool bIsPlus = false;
-	if (FMemoryRoomMenuRow* Row = FindRow(HoveredComponent.Get(), bIsPlus))
+	bool bPressed = false;
+	FMemoryRoomMenuRow* Row = nullptr;
+	if (bFolderBrowserOpen && IsFolderWindowComponent(HoveredComponent.Get()))
+	{
+		bPressed = PressFolderWindow(HoveredComponent.Get());
+	}
+	else if ((Row = FindRow(HoveredComponent.Get(), bIsPlus)) != nullptr)
 	{
 		PressRow(*Row, bIsPlus);
+		bPressed = true;
+	}
+	if (bPressed)
+	{
 		if (PressHapticEffect)
 		{
 			if (APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr)
@@ -761,11 +966,301 @@ void AMemoryRoomMenuActor::PressRow(FMemoryRoomMenuRow& Row, bool bIsPlus)
 		StatusMessage = TEXT("Refreshing photos...");
 		if (MemoryRoomManager) MemoryRoomManager->ReloadPhotoLibrary();
 		break;
+	case EMemoryRoomMenuAction::ChoosePhotoSource:
+		ToggleFolderBrowser();
+		break;
 	case EMemoryRoomMenuAction::Close:
 		CloseMenu();
 		break;
 	}
 	RefreshText();
+}
+
+void AMemoryRoomMenuActor::ToggleFolderBrowser()
+{
+	if (bFolderBrowserOpen)
+	{
+		CloseFolderBrowser();
+	}
+	else
+	{
+		OpenFolderBrowser();
+	}
+}
+
+void AMemoryRoomMenuActor::OpenFolderBrowser()
+{
+	ResolveManager();
+	if (!MemoryRoomManager || bFolderBrowserOpen) return;
+
+	bFolderBrowserOpen = true;
+	BrowserPage = 0;
+	BrowserCurrentParentId = MemoryRoomManager->GetSelectedPhotoAlbumId();
+	// "All photos" is a selection, not a directory level.
+	if (BrowserCurrentParentId == TEXT("@all")) BrowserCurrentParentId.Reset();
+	if (!MemoryRoomManager->GetPhotoAlbums().ContainsByPredicate([this](const FMemoryRoomAlbum& Album) { return Album.Id == BrowserCurrentParentId; })) BrowserCurrentParentId.Reset();
+	BrowserPendingSelectionId = BrowserCurrentParentId;
+	BrowserOpenedSeconds = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.0f;
+	BrowserLastAlbumCount = -1;
+	FolderProgress = 0.0f;
+
+	PositionFolderWindow();
+	ApplyFolderWindowScale();
+	if (bFloatInFrontOfView && bMenuOpen)
+	{
+		// Slide the board aside so the window has the middle of the view.
+		PositionMenuInFrontOfView();
+	}
+	SetFolderBrowserVisible(true);
+	RefreshFolderBrowser();
+	MemoryRoomManager->RefreshPhotoFolders();
+	ApplyHoverVisuals();
+}
+
+void AMemoryRoomMenuActor::CloseFolderBrowser()
+{
+	if (!bFolderBrowserOpen) return;
+	bFolderBrowserOpen = false;
+	FolderProgress = 0.0f;
+	if (IsFolderWindowComponent(HoveredComponent.Get())) HoveredComponent.Reset();
+	SetFolderBrowserVisible(false);
+	if (bFloatInFrontOfView && bMenuOpen)
+	{
+		PositionMenuInFrontOfView();
+	}
+	RefreshText();
+}
+
+void AMemoryRoomMenuActor::PositionFolderWindow()
+{
+	const APlayerController* PC = GetWorld() ? GetWorld()->GetFirstPlayerController() : nullptr;
+	if (!PC || !FolderRoot) return;
+	FVector ViewLocation; FRotator ViewRotation;
+	PC->GetPlayerViewPoint(ViewLocation, ViewRotation);
+
+	FVector Forward = ViewRotation.Vector();
+	Forward.Z = 0.0f;
+	if (!Forward.Normalize()) Forward = FVector::ForwardVector;
+
+	const FVector Location = ViewLocation + Forward * FMath::Max(FolderWindowDistanceCm, 40.0f) + FVector(0.0f, 0.0f, FolderWindowHeightOffsetCm);
+	// Content is on the window's -X face, so +X points away from the viewer, like the board.
+	FRotator Rotation = Forward.Rotation();
+	Rotation.Pitch = -MenuPitchDegrees;
+	Rotation.Roll = 0.0f;
+	FolderRoot->SetWorldLocationAndRotation(Location, Rotation);
+}
+
+bool AMemoryRoomMenuActor::IsFolderWindowComponent(const UPrimitiveComponent* Component) const
+{
+	if (!Component) return false;
+	if (Component == BrowserPanel) return true;
+	for (const FMemoryRoomFolderButton* Button : { &BrowserUp, &BrowserClose, &BrowserPrev, &BrowserNext, &BrowserUse })
+	{
+		if (Button->Box == Component) return true;
+	}
+	for (const FMemoryRoomFolderTile& Tile : FolderTiles)
+	{
+		if (Tile.Box == Component) return true;
+	}
+	return false;
+}
+
+FString AMemoryRoomMenuActor::GetParentOfFolder(const FString& FolderId) const
+{
+	if (!MemoryRoomManager) return FString();
+	const TArray<FMemoryRoomAlbum>& Albums = MemoryRoomManager->GetPhotoAlbums();
+	const FMemoryRoomAlbum* Found = Albums.FindByPredicate([&FolderId](const FMemoryRoomAlbum& Album) { return Album.Id == FolderId; });
+	if (!Found || Found->ParentId.IsEmpty()) return FString();
+	// A parent that is not itself listed (desktop roots carry a filesystem path) is the root.
+	const bool bParentListed = Albums.ContainsByPredicate([Found](const FMemoryRoomAlbum& Album) { return Album.Id == Found->ParentId; });
+	return bParentListed ? Found->ParentId : FString();
+}
+
+bool AMemoryRoomMenuActor::PressFolderWindow(UPrimitiveComponent* Hit)
+{
+	if (!Hit || !MemoryRoomManager) return false;
+
+	if (Hit == BrowserClose.Box)
+	{
+		CloseFolderBrowser();
+		return true;
+	}
+	if (Hit == BrowserUp.Box)
+	{
+		BrowserCurrentParentId = GetParentOfFolder(BrowserCurrentParentId);
+		BrowserPendingSelectionId = BrowserCurrentParentId;
+		BrowserPage = 0;
+		RefreshFolderBrowser();
+		return true;
+	}
+	if (Hit == BrowserPrev.Box)
+	{
+		BrowserPage = FMath::Max(0, BrowserPage - 1);
+		RefreshFolderBrowser();
+		return true;
+	}
+	if (Hit == BrowserNext.Box)
+	{
+		++BrowserPage;
+		RefreshFolderBrowser();
+		return true;
+	}
+	if (Hit == BrowserUse.Box)
+	{
+		// "Use this folder" = the folder the window is currently showing the inside of.
+		if (!BrowserPendingSelectionId.IsEmpty() && MemoryRoomManager->SelectPhotoAlbumById(BrowserPendingSelectionId))
+		{
+			StatusMessage = TEXT("Photo folder saved. Loading photos...");
+			CloseFolderBrowser();
+			RefreshText();
+		}
+		return true;
+	}
+	for (FMemoryRoomFolderTile& Tile : FolderTiles)
+	{
+		if (Tile.Box == Hit && !Tile.AlbumId.IsEmpty())
+		{
+			BrowserCurrentParentId = Tile.AlbumId;
+			BrowserPendingSelectionId = Tile.AlbumId;
+			BrowserPage = 0;
+			RefreshFolderBrowser();
+			return true;
+		}
+	}
+	return false;
+}
+
+void AMemoryRoomMenuActor::SetFolderBrowserVisible(bool bVisible)
+{
+	if (FolderRoot) FolderRoot->SetVisibility(bVisible, true);
+	if (FolderLight) FolderLight->SetVisibility(bVisible);
+	// Hiding drops every press target; RefreshFolderBrowser re-enables the ones in use.
+	auto SetTargetCollision = [](UBoxComponent* Box, bool bEnabled)
+	{
+		if (Box) Box->SetCollisionEnabled(bEnabled ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+	};
+	if (!bVisible)
+	{
+		for (FMemoryRoomFolderButton* Button : { &BrowserUp, &BrowserClose, &BrowserPrev, &BrowserNext, &BrowserUse })
+		{
+			SetTargetCollision(Button->Box, false);
+		}
+		for (FMemoryRoomFolderTile& Tile : FolderTiles)
+		{
+			SetTargetCollision(Tile.Box, false);
+		}
+	}
+}
+
+void AMemoryRoomMenuActor::RefreshFolderBrowser()
+{
+	if (!MemoryRoomManager || !bFolderBrowserOpen) return;
+	const TArray<FMemoryRoomAlbum>& Albums = MemoryRoomManager->GetPhotoAlbums();
+	BrowserLastAlbumCount = Albums.Num();
+
+	TArray<const FMemoryRoomAlbum*> VisibleFolders;
+	for (const FMemoryRoomAlbum& Album : Albums)
+	{
+		if (Album.ParentId == BrowserCurrentParentId) VisibleFolders.Add(&Album);
+		else if (BrowserCurrentParentId.IsEmpty() && !Album.ParentId.IsEmpty())
+		{
+			const bool bParentListed = Albums.ContainsByPredicate([&Album](const FMemoryRoomAlbum& Candidate) { return Candidate.Id == Album.ParentId; });
+			if (!bParentListed) VisibleFolders.Add(&Album); // Desktop roots carry a filesystem path as ParentId.
+		}
+	}
+	VisibleFolders.Sort([](const FMemoryRoomAlbum& A, const FMemoryRoomAlbum& B) { return A.Name < B.Name; });
+	const int32 PageCount = FMath::Max(1, FMath::DivideAndRoundUp(VisibleFolders.Num(), FolderTiles.Num()));
+	BrowserPage = FMath::Clamp(BrowserPage, 0, PageCount - 1);
+
+	auto SetTargetActive = [](UBoxComponent* Box, UStaticMeshComponent* Panel, UTextRenderComponent* Label, bool bActive)
+	{
+		if (Box) Box->SetCollisionEnabled(bActive ? ECollisionEnabled::QueryOnly : ECollisionEnabled::NoCollision);
+		if (Panel) Panel->SetVisibility(bActive);
+		if (Label) Label->SetVisibility(bActive);
+	};
+
+	for (int32 i = 0; i < FolderTiles.Num(); ++i)
+	{
+		FMemoryRoomFolderTile& Tile = FolderTiles[i];
+		const int32 Index = BrowserPage * FolderTiles.Num() + i;
+		if (VisibleFolders.IsValidIndex(Index))
+		{
+			const FMemoryRoomAlbum& Album = *VisibleFolders[Index];
+			Tile.AlbumId = Album.Id;
+			Tile.Text->SetText(FText::FromString(GlassMenu_Truncate(Album.Name, GlassMenu_NameMaxChars)));
+			Tile.Detail->SetText(FText::FromString(Album.Count > 0 ? FString::Printf(TEXT("%d photos"), Album.Count) : FString()));
+			SetTargetActive(Tile.Box, Tile.Panel, Tile.Text, true);
+			Tile.Detail->SetVisibility(true);
+		}
+		else
+		{
+			Tile.AlbumId.Reset();
+			SetTargetActive(Tile.Box, Tile.Panel, Tile.Text, false);
+			Tile.Detail->SetVisibility(false);
+		}
+	}
+
+	// Empty / pending states: the grid is blank, so say why.
+	FString EmptyMessage;
+	bBrowserPendingShown = false;
+	if (VisibleFolders.Num() == 0)
+	{
+		if (Albums.Num() == 0)
+		{
+			const float Elapsed = GetWorld() ? GetWorld()->GetTimeSeconds() - BrowserOpenedSeconds : 0.0f;
+			bBrowserPendingShown = Elapsed < GlassMenu_PendingSeconds;
+			EmptyMessage = bBrowserPendingShown ? FString(TEXT("Looking for folders") + FString::Chr(0x2026)) : FString(TEXT("No photo folders found on this headset."));
+		}
+		else
+		{
+			EmptyMessage = TEXT("No folders inside this one.");
+		}
+	}
+	BrowserEmptyText->SetText(FText::FromString(EmptyMessage));
+	BrowserEmptyText->SetVisibility(!EmptyMessage.IsEmpty());
+
+	// Breadcrumb: Headset > ... > current. Long paths keep their tail.
+	TArray<FString> Crumbs;
+	FString Walk = BrowserCurrentParentId;
+	for (int32 Guard = 0; Guard < 8 && !Walk.IsEmpty(); ++Guard)
+	{
+		const FMemoryRoomAlbum* Found = Albums.FindByPredicate([&Walk](const FMemoryRoomAlbum& Album) { return Album.Id == Walk; });
+		if (!Found) break;
+		Crumbs.Insert(Found->Name, 0);
+		Walk = GetParentOfFolder(Walk);
+	}
+	FString Path = TEXT("Headset");
+	const FString Separator = FString(TEXT(" ")) + FString::Chr(0x203A) + TEXT(" ");
+	for (const FString& Crumb : Crumbs) Path += Separator + Crumb;
+	if (Path.Len() > GlassMenu_PathMaxChars)
+	{
+		Path = FString::Chr(0x2026) + Path.Right(GlassMenu_PathMaxChars - 1);
+	}
+	BrowserPathText->SetText(FText::FromString(Path));
+
+	// Hint line: first-run prompt, else how many photos the current folder holds.
+	FString Hint;
+	if (!MemoryRoomManager->HasPhotoSourceChoice())
+	{
+		Hint = TEXT("Choose a photo folder to begin.");
+	}
+	else if (const FMemoryRoomAlbum* Current = Albums.FindByPredicate([this](const FMemoryRoomAlbum& Album) { return Album.Id == BrowserCurrentParentId; }))
+	{
+		Hint = Current->Count > 0 ? FString::Printf(TEXT("%d photos in this folder"), Current->Count) : FString();
+	}
+	BrowserHintText->SetText(FText::FromString(Hint));
+
+	BrowserPageText->SetText(FText::FromString(FString::Printf(TEXT("%d / %d"), BrowserPage + 1, PageCount)));
+
+	// Controls: close is always live; the rest only when they would do something.
+	SetTargetActive(BrowserClose.Box, BrowserClose.Panel, BrowserClose.Label, true);
+	SetTargetActive(BrowserUp.Box, BrowserUp.Panel, BrowserUp.Label, !BrowserCurrentParentId.IsEmpty());
+	SetTargetActive(BrowserPrev.Box, BrowserPrev.Panel, BrowserPrev.Label, BrowserPage > 0);
+	SetTargetActive(BrowserNext.Box, BrowserNext.Panel, BrowserNext.Label, BrowserPage + 1 < PageCount);
+	SetTargetActive(BrowserUse.Box, BrowserUse.Panel, BrowserUse.Label, !BrowserPendingSelectionId.IsEmpty());
+	BrowserPageText->SetVisibility(PageCount > 1);
+
+	ApplyHoverVisuals();
 }
 
 void AMemoryRoomMenuActor::RefreshText()
@@ -794,6 +1289,7 @@ void AMemoryRoomMenuActor::RefreshText()
 			case EMemoryRoomMenuAction::ResetView: Text = TEXT("RESET VIEW"); break;
 			case EMemoryRoomMenuAction::JumpToNewest: Text = TEXT("JUMP TO NEWEST"); break;
 			case EMemoryRoomMenuAction::ReloadPhotos: Text = TEXT("RELOAD PHOTOS"); break;
+			case EMemoryRoomMenuAction::ChoosePhotoSource: Text = TEXT("CHOOSE FOLDER"); break;
 			case EMemoryRoomMenuAction::Close: Text = TEXT("CLOSE"); break;
 			}
 			Row.Label->SetText(FText::FromString(Text));
@@ -811,73 +1307,75 @@ void AMemoryRoomMenuActor::RefreshText()
 
 void AMemoryRoomMenuActor::ApplyUIStyle(const FMemoryRoomWristUIStyle& NewStyle)
 {
-	// The clipboard's paper + ink look is deliberately theme-independent - it should read the
-	// same whatever the sky is doing. The theme's accent tints the value text only.
-	Style = NewStyle;
-	ValueColor = (NewStyle.AccentColor * 0.55f + FLinearColor(0.10f, 0.04f, 0.0f)).ToFColor(true);
-	RebuildStyleMaterials();
-	if (TitleText)
+	// The glass menu look is deliberately theme-independent (warm-tinted, unlit), so the theme's
+	// style is ignored. This only guarantees the glass has been painted.
+	if (!bStyled)
 	{
-		TitleText->SetTextRenderColor(TitleColor);
-		TitleText->SetHorizSpacingAdjust(LabelTracking * 2.0f);
+		RebuildStyleMaterials();
 	}
-	if (StatusText)
-	{
-		StatusText->SetTextRenderColor(DimLabelColor);
-	}
-	for (FMemoryRoomMenuRow& Row : Rows)
-	{
-		if (Row.Label)
-		{
-			Row.Label->SetHorizSpacingAdjust(LabelTracking);
-		}
-	}
-	ApplyHoverVisuals();
 }
 
 void AMemoryRoomMenuActor::RebuildStyleMaterials()
 {
 	bStyled = true;
 
-	// Every surface is the unlit solid-colour material, so the clipboard reads the same in
-	// broad daylight and at night.
-	BoardMaterial = MemoryRoomUI::MakeSolidMaterial(GlassBaseMaterial, BoardColor, this);
-	PaperMaterial = MemoryRoomUI::MakeSolidMaterial(GlassBaseMaterial, PaperColor, this);
-	InkMaterial = MemoryRoomUI::MakeSolidMaterial(GlassBaseMaterial, InkColor, this);
-	ClipMaterial = MemoryRoomUI::MakeSolidMaterial(GlassBaseMaterial, ClipColor, this);
-	// Tiles: a key-cap slightly darker than the page at rest, warm rust under the pointer.
-	TileMaterial = MemoryRoomUI::MakeSolidMaterial(GlassBaseMaterial, PaperColor * 0.80f, this);
-	TileHotMaterial = MemoryRoomUI::MakeSolidMaterial(GlassBaseMaterial, FLinearColor(0.58f, 0.34f, 0.15f), this);
+	UMaterialInterface* Base = GlassTranslucentMaterial ? GlassTranslucentMaterial.Get() : MemoryRoomUI::LoadGlassTranslucentMaterial();
+	GlassTranslucentMaterial = Base;
 
-	if (BackgroundPanel && BoardMaterial) BackgroundPanel->SetMaterial(0, BoardMaterial);
-	if (PaperPanel && PaperMaterial) PaperPanel->SetMaterial(0, PaperMaterial);
-	if (ClipPanel && ClipMaterial) ClipPanel->SetMaterial(0, ClipMaterial);
-	if (TitleRule && InkMaterial) TitleRule->SetMaterial(0, InkMaterial);
-	if (SectionRule && InkMaterial) SectionRule->SetMaterial(0, InkMaterial);
-	for (FMemoryRoomMenuRow& Row : Rows)
+	// Frosted, warm and fixed. Panels: soft white body, brighter rim. Chips: fainter. Highlight:
+	// amber / honey (never blue). Painted once here, never per frame; 8 distinct textures.
+	using MemoryRoomUI::FGlassPanelSpec;
+	auto Panel = [](float W, float H) { FGlassPanelSpec S; S.WidthCm = W; S.HeightCm = H; S.BodyAlpha = 0.12f; S.RimAlpha = 0.30f; S.RimPixels = 1.5f; S.SheenAlpha = 0.07f; return S; };
+	auto Chip = [](float W, float H) { FGlassPanelSpec S; S.WidthCm = W; S.HeightCm = H; S.BodyAlpha = 0.08f; S.RimAlpha = 0.18f; S.RimPixels = 1.5f; S.SheenAlpha = 0.04f; return S; };
+	auto Hot = [](float W, float H) { FGlassPanelSpec S; S.WidthCm = W; S.HeightCm = H; S.Tint = FLinearColor(0.95f, 0.72f, 0.40f); S.RimTint = FLinearColor(1.0f, 0.78f, 0.42f); S.BodyAlpha = 0.25f; S.RimAlpha = 0.70f; S.RimPixels = 2.0f; S.SheenAlpha = 0.08f; return S; };
+	auto Make = [this, Base](const FGlassPanelSpec& Spec)
 	{
-		if (Row.MinusPanel && TileMaterial) Row.MinusPanel->SetMaterial(0, TileMaterial);
-		if (Row.PlusPanel && TileMaterial) Row.PlusPanel->SetMaterial(0, TileMaterial);
+		return MemoryRoomUI::MakeTranslucentMaterial(Base, MemoryRoomUI::MakeFrostedPanelTexture(Spec), this);
+	};
+
+	BoardGlassMaterial = Make(Panel(BoardPanelWidthCm, BoardPanelHeightCm));
+	SquareChipMaterial = Make(Chip(PressHalfY * 2.0f, PressHalfZ * 2.0f));
+	SquareChipHotMaterial = Make(Hot(PressHalfY * 2.0f, PressHalfZ * 2.0f));
+	WideChipMaterial = Make(Chip(TileHalfY * 2.0f, PressHalfZ * 2.0f));
+	WideChipHotMaterial = Make(Hot(TileHalfY * 2.0f, PressHalfZ * 2.0f));
+	FolderWindowMaterial = Make(Panel(GlassMenu_WinWidth, GlassMenu_WinHeight));
+	FGlassPanelSpec TileSpec = Chip(GlassMenu_WinTileW, GlassMenu_WinTileH);
+	TileSpec.bFolderGlyph = true;
+	FolderTileMaterial = Make(TileSpec);
+	FGlassPanelSpec TileHotSpec = Hot(GlassMenu_WinTileW, GlassMenu_WinTileH);
+	TileHotSpec.bFolderGlyph = true;
+	FolderTileHotMaterial = Make(TileHotSpec);
+
+	if (BackgroundPanel && BoardGlassMaterial) BackgroundPanel->SetMaterial(0, BoardGlassMaterial);
+	if (BrowserPanel && FolderWindowMaterial) BrowserPanel->SetMaterial(0, FolderWindowMaterial);
+
+	// The painted sheen / glyphs assume the engine plane's V runs top to bottom once stood up;
+	// bFlipGlassFaces spins every face 180 degrees about its normal if it does not.
+	const FQuat Stand = FRotator(90.0f, 0.0f, 0.0f).Quaternion();
+	const FQuat FaceRotation = bFlipGlassFaces ? Stand * FQuat(FVector::UpVector, PI) : Stand;
+	for (UStaticMeshComponent* Face : GlassFaces)
+	{
+		if (Face) Face->SetRelativeRotation(FaceRotation);
 	}
+
+	ApplyHoverVisuals();
 }
 
 void AMemoryRoomMenuActor::ApplyHoverVisuals()
 {
+	if (!bStyled) return;
 	const UPrimitiveComponent* Hovered = HoveredComponent.Get();
 	for (FMemoryRoomMenuRow& Row : Rows)
 	{
 		const bool bMinusHot = Hovered == Row.MinusBox;
 		const bool bPlusHot = Hovered == Row.PlusBox;
 
-		// The tile warms at once; its size and lift ease in over a few frames (TickHoverAnimation).
-		if (Row.MinusPanel && TileMaterial && TileHotMaterial)
-		{
-			Row.MinusPanel->SetMaterial(0, bMinusHot ? TileHotMaterial : TileMaterial);
-		}
-		if (Row.PlusPanel && TileMaterial && TileHotMaterial)
-		{
-			Row.PlusPanel->SetMaterial(0, bPlusHot ? TileHotMaterial : TileMaterial);
-		}
+		// Chips swap to the amber glass at once; size and lift ease in over a few frames
+		// (TickHoverAnimation). Setting rows use the square chip, action rows the wide one.
+		UMaterialInterface* Rest = Row.bIsSetting ? SquareChipMaterial.Get() : WideChipMaterial.Get();
+		UMaterialInterface* HotMat = Row.bIsSetting ? SquareChipHotMaterial.Get() : WideChipHotMaterial.Get();
+		if (Row.MinusPanel && Rest && HotMat) Row.MinusPanel->SetMaterial(0, bMinusHot ? HotMat : Rest);
+		if (Row.PlusPanel && Rest && HotMat) Row.PlusPanel->SetMaterial(0, bPlusHot ? HotMat : Rest);
 
 		if (Row.MinusGlyph) Row.MinusGlyph->SetTextRenderColor(bMinusHot ? HighlightColor : DimLabelColor);
 		if (Row.PlusGlyph) Row.PlusGlyph->SetTextRenderColor(bPlusHot ? HighlightColor : DimLabelColor);
@@ -890,13 +1388,36 @@ void AMemoryRoomMenuActor::ApplyHoverVisuals()
 		}
 		if (Row.ValueText)
 		{
-			// Values are gold: they are the thing on the board you are here to change.
 			Row.ValueText->SetTextRenderColor((bMinusHot || bPlusHot) ? HighlightColor : ValueColor);
 		}
 	}
+
+	// Folder window. The folder the library currently uses keeps the amber highlight.
+	const FString SelectedId = MemoryRoomManager ? MemoryRoomManager->GetSelectedPhotoAlbumId() : FString();
+	for (FMemoryRoomFolderTile& Tile : FolderTiles)
+	{
+		const bool bHot = Hovered == Tile.Box;
+		const bool bSelected = !Tile.AlbumId.IsEmpty() && Tile.AlbumId == SelectedId;
+		if (Tile.Panel && FolderTileMaterial && FolderTileHotMaterial) Tile.Panel->SetMaterial(0, (bHot || bSelected) ? FolderTileHotMaterial : FolderTileMaterial);
+		if (Tile.Text) Tile.Text->SetTextRenderColor(bHot ? HighlightColor : LabelColor);
+	}
+	for (FMemoryRoomFolderButton* Button : { &BrowserUp, &BrowserClose, &BrowserPrev, &BrowserNext, &BrowserUse })
+	{
+		const bool bHot = Hovered == Button->Box;
+		// "Use this folder" is the primary action: amber at rest, so it always reads as the one to press.
+		UMaterialInterface* Rest = Button->bPrimary ? WideChipHotMaterial.Get() : SquareChipMaterial.Get();
+		UMaterialInterface* HotMat = Button->bPrimary ? WideChipHotMaterial.Get() : SquareChipHotMaterial.Get();
+		if (Button->Panel && Rest && HotMat) Button->Panel->SetMaterial(0, bHot ? HotMat : Rest);
+		if (Button->Label) Button->Label->SetTextRenderColor((bHot || Button->bPrimary) ? HighlightColor : LabelColor);
+	}
 }
 
-void AMemoryRoomMenuActor::HandleSettingsChanged() { RefreshText(); }
+void AMemoryRoomMenuActor::HandleSettingsChanged()
+{
+	if (MemoryRoomManager && MemoryRoomManager->HasPhotoSourceChoice()) StatusMessage.Reset();
+	if (bFolderBrowserOpen) RefreshFolderBrowser();
+	RefreshText();
+}
 void AMemoryRoomMenuActor::HandleReloadStarted() { StatusMessage = TEXT("Refreshing photos..."); RefreshText(); }
 void AMemoryRoomMenuActor::HandleReloadCompleted(int32 PhotoCount, bool bSuccess)
 {
