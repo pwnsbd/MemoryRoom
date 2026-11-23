@@ -60,7 +60,17 @@ enum class EMemoryRoomUserSetting : uint8
 	ThumbnailQuality,
 	Theme,
 	Float,
+	PhotoAlbum,
 	Count UMETA(Hidden)
+};
+
+// One entry in the Photos row's album list. "@all" identifies All photos.
+struct FMemoryRoomAlbum
+{
+	FString Id;
+	FString Name;
+	FString ParentId;
+	int32 Count = 0;
 };
 
 class AMemoryRoomMenuActor;
@@ -107,6 +117,16 @@ public:
 
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
 	void StopLocomotionMoveInput();
+
+	// Right-stick smooth turn (X axis only - Y is still gallery scroll). Rotates the pawn
+	// about the player's actual head position each tick, not the pawn's own origin, so the
+	// room spins around you instead of swinging you around the capsule. Feed the Axis1D
+	// action value on Triggered, and call the Stop variant on Completed/Canceled.
+	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
+	void SetTurnInput(float Value);
+
+	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
+	void StopTurnInput();
 
 	// Flip walk <-> float. Bind to a digital action (left X click) on Triggered.
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Locomotion")
@@ -238,6 +258,18 @@ public:
 	// Steps a setting up (+1) or down (-1); clamps, applies live, and saves.
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Settings")
 	void AdjustUserSetting(EMemoryRoomUserSetting Setting, int32 Direction);
+
+	// Source selection state for the in-headset onboarding menu.
+	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Memory Room|Settings")
+	bool HasPhotoSourceChoice() const { return bHasPhotoSourceChoice; }
+
+	// Commits the album currently previewed by the Photos row. Browsing never loads or saves.
+	UFUNCTION(BlueprintCallable, Category = "Memory Room|Settings")
+	bool CommitPhotoAlbumPreview();
+	const TArray<FMemoryRoomAlbum>& GetPhotoAlbums() const { return Albums; }
+	const FString& GetSelectedPhotoAlbumId() const { return SelectedAlbumId; }
+	bool SelectPhotoAlbumById(const FString& Id);
+	void RefreshPhotoFolders() { RefreshAlbumList(); }
 
 	// Loads saved settings and pushes them into the world. Called at BeginPlay.
 	UFUNCTION(BlueprintCallable, Category = "Memory Room|Settings")
@@ -455,6 +487,17 @@ public:
 	// How far up you can float, measured in full turns of the photo spiral (~5.1 m each).
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Locomotion", meta = (ClampMin = "0.0"))
 	float MaxFloatTurns = 3.0f;
+
+	// Horizontal containment: the player can never get farther from the helix centre than the
+	// photo ring itself, minus this margin. The ring tapers with height (GallerySpiralBaseRadius
+	// -> GallerySpiralTopRadius over GallerySpiralTaperHeight, same curve as
+	// EvaluateGallerySpiralPosition), so this boundary tapers with you as you float up.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Locomotion", meta = (ClampMin = "0.0"))
+	float SpiralBoundaryMarginCm = 60.0f;
+
+	// Smooth-turn speed at full stick deflection.
+	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room|Locomotion", meta = (ClampMin = "0.0"))
+	float TurnSpeedDegPerSec = 90.0f;
 
 	UPROPERTY(EditAnywhere, BlueprintReadWrite, Category = "Memory Room", meta = (DisplayName = "Enable Helix Layout"))
 	bool bEnableHelixLayout;
@@ -810,12 +853,21 @@ private:
 	void AddMoveXInput(float Value);
 	void AddMoveYInput(float Value);
 	void TickLocomotion(float DeltaSeconds);
+	void TickTurn(float DeltaSeconds);
 	void ProcessGalleryLoadBatch();
 	void FinishGalleryLoad();
 	bool StartAndroidMediaStoreDiagnosticLoad();
 	// Android folder-based photo loading (alternative to MediaStore).
 	FString ResolveAndroidPhotoFolderPath() const;
 	bool TryStartAndroidFolderLoad();
+	// Photo albums (the settings panel's Photos row). The list is cached; RefreshAlbumList
+	// rebuilds it off the game thread at startup, on reload, and when the row is used.
+	void RefreshAlbumList();
+	void FinishAlbumList(TArray<FMemoryRoomAlbum>&& Found, bool bComplete);
+	void ScheduleAlbumReload();
+	// The MediaStore bucket to filter by, or empty when the selection is not a MediaStore album.
+	FString GetActiveBucketId() const;
+	void ApplyAlbumFilterToPhotoSource();
 	void AssignAndroidPhotoToActor(int32 PhotoIndex, AMemoryPhotoActor* PhotoActor);
 	void QueueAndroidThumbnailRequest(int32 PhotoIndex, AMemoryPhotoActor* PhotoActor);
 	void PumpAndroidThumbnailQueue();
@@ -837,6 +889,15 @@ private:
 	// and ApplyUserSettings). bRelayout requests a gallery path rebuild afterward.
 	void PushUserSettingToWorld(EMemoryRoomUserSetting Setting, bool& bOutNeedsRelayout);
 	void SaveUserSettings() const;
+
+	TArray<FMemoryRoomAlbum> Albums;
+	FString SelectedAlbumId;
+	bool bHasPhotoSourceChoice = false;
+	int32 PreviewAlbumIndex = 0;
+	bool bPhotoAlbumPreviewActive = false;
+	int32 AlbumEnumerationGeneration = 0;
+	double LastAlbumRefreshSeconds = -1000.0;
+	FTimerHandle AlbumReloadTimerHandle;
 	AMemoryRoomSkyDomeActor* FindSkyDome() const;
 	AMemoryRoomDustActor* FindDustActor() const;
 
@@ -880,6 +941,8 @@ private:
 	// state does not work for OpenXR controllers - only bound axis/action delegates fire).
 	float LocoInputX = 0.0f;
 	float LocoInputY = 0.0f;
+	// Right-stick X only - Y stays on gallery scroll.
+	float TurnInputX = 0.0f;
 	// Floor height captured once by SnapPlayerPawnToFloor - the bottom of the float range.
 	float LocomotionFloorZ = 0.0f;
 	bool bLocomotionFloorCaptured = false;
@@ -1031,9 +1094,17 @@ private:
 	// its texture; otherwise the queue would stall the moment the player let go.
 	bool bHasPendingPhotoTextures = false;
 	double LastLayoutDiagnosticSeconds = -10.0;
+	// Hash of everything LayoutVirtualizedGallery's per-photo transform/viewing state depends
+	// on. While it is unchanged, photos already at rest in their slot are not re-laid-out.
+	uint32 LastVirtualLayoutKey = 0;
+	bool bHasVirtualLayoutKey = false;
 
 	// 0..3 index into a small set of dust density presets (Off / Low / Medium / Full).
 	int32 DustAmountLevel = 3;
+
+	// Ambient particle style picked in the settings menu (Dust / Leaves). Wins over the theme's
+	// MoteStyle: ApplyTheme applies this instead of the theme's value.
+	EMemoryRoomMoteStyle ParticleStyle = EMemoryRoomMoteStyle::Dust;
 
 	float ScrollVelocity;
 	float ScrollInputAmount;

@@ -42,4 +42,52 @@ namespace MemoryRoomUI
 	MEMORYROOM_API UMaterialInstanceDynamic* MakeSolidMaterial(UMaterialInterface* Base, const FLinearColor& Color, UObject* Outer);
 	// The slab: Style.PanelColor at the top down to Style.GlassGlowColor at the bottom.
 	MEMORYROOM_API UMaterialInstanceDynamic* MakeGlassMaterial(UMaterialInterface* Base, const FMemoryRoomWristUIStyle& Style, UObject* Outer, bool bFlip = false);
+
+	// --- Frosted glass panels (settings board + folder window) ---
+	// A rounded-rectangle RGBA texture: soft body, brighter rim, faint top sheen. Painted once
+	// per style, never per frame. Fixed warm look - deliberately not read from the theme.
+	struct FGlassPanelSpec
+	{
+		// Physical size in cm; only the aspect matters (the long side is painted at MaxSide).
+		float WidthCm = 10.0f;
+		float HeightCm = 10.0f;
+		FLinearColor Tint = FLinearColor(1.0f, 0.97f, 0.92f);
+		FLinearColor RimTint = FLinearColor(1.0f, 0.98f, 0.94f);
+		float BodyAlpha = 0.12f;
+		float RimAlpha = 0.30f;
+		float RimPixels = 1.5f;
+		float SheenAlpha = 0.07f;
+		// Corner radius as a fraction of the short side.
+		float CornerFraction = 0.06f;
+		// Paints a small folder icon in the upper middle (folder tiles).
+		bool bFolderGlyph = false;
+	};
+
+	// Translucent, unlit, one texture parameter ("SlateUI") carrying colour + alpha - the
+	// material UWidgetComponent uses for its translucent 3D widgets.
+	MEMORYROOM_API const TCHAR* GlassTranslucentMaterialPath();
+	MEMORYROOM_API UMaterialInterface* LoadGlassTranslucentMaterial();
+
+	MEMORYROOM_API UTexture2D* MakeFrostedPanelTexture(const FGlassPanelSpec& Spec, int32 MaxSide = 256);
+
+	// --- Painted icons ---
+	// Small shapes drawn from signed-distance functions into a transparent RGBA texture, so the
+	// menu never depends on the TextRender font having an arrow / tick / folder glyph. Each icon
+	// is painted once (Size x Size, square) in a single colour; the chip behind it supplies the
+	// glass. Put it on a flat plane with MakeTranslucentMaterial.
+	enum class EGlassIcon : uint8
+	{
+		Up,      // arrow pointing up (parent folder)
+		Close,   // x
+		Prev,    // single chevron, left
+		Next,    // single chevron, right
+		Check,   // tick
+		Reset,   // one counter-clockwise arrow circle
+		Clock,   // ring with two hands
+		Refresh, // two clockwise arrows chasing round a circle
+		Folder   // folder with tab
+	};
+	MEMORYROOM_API UTexture2D* MakeIconTexture(EGlassIcon Icon, const FLinearColor& Color, int32 Size = 64);
+	// Dynamic instance of the translucent base with Texture bound to "SlateUI".
+	MEMORYROOM_API UMaterialInstanceDynamic* MakeTranslucentMaterial(UMaterialInterface* Base, UTexture2D* Texture, UObject* Outer);
 }

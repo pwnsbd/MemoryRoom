@@ -16,7 +16,64 @@ import java.io.InputStream;
 public class MemoryRoomMediaStoreBridge {
     private static Activity activity() { return com.epicgames.unreal.GameActivity.Get(); }
 
-    public static String queryImagesJson(int offset, int limit) {
+    // Lists folders containing images, including parent folders with recursive counts.
+    public static String queryAlbumsJson() {
+        JSONObject root = new JSONObject();
+        try {
+            Activity a = activity();
+            if (a == null) {
+                throw new IllegalStateException("GameActivity is null");
+            }
+
+            ContentResolver cr = a.getContentResolver();
+            String[] projection = new String[] { MediaStore.Images.Media.RELATIVE_PATH };
+            final java.util.HashMap<String, Integer> counts = new java.util.HashMap<>();
+            try (Cursor cursor = cr.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, null)) {
+                while (cursor != null && cursor.moveToNext()) {
+                    if (cursor.isNull(0)) continue;
+                    String path = cursor.getString(0);
+                    if (path == null || path.length() == 0) continue;
+                    if (!path.endsWith("/")) path += "/";
+                    String current = path;
+                    while (current.length() > 0) {
+                        Integer c = counts.get(current);
+                        counts.put(current, c == null ? 1 : c + 1);
+                        int end = current.length() - 1;
+                        int slash = current.lastIndexOf('/', end - 1);
+                        if (slash < 0) break;
+                        current = current.substring(0, slash + 1);
+                    }
+                }
+            }
+            java.util.ArrayList<String> paths = new java.util.ArrayList<>(counts.keySet());
+            java.util.Collections.sort(paths, new java.util.Comparator<String>() {
+                @Override public int compare(String x, String y) {
+                    int byCount = counts.get(y) - counts.get(x);
+                    return byCount != 0 ? byCount : x.compareToIgnoreCase(y);
+                }
+            });
+            JSONArray albums = new JSONArray();
+            for (String path : paths) {
+                String trimmed = path.substring(0, path.length() - 1);
+                int slash = trimmed.lastIndexOf('/');
+                String name = trimmed.substring(slash + 1);
+                String parentPath = slash < 0 ? "" : trimmed.substring(0, slash + 1);
+                JSONObject o = new JSONObject();
+                o.put("id", "@path:" + path);
+                o.put("name", name);
+                o.put("parentId", parentPath.length() == 0 ? "@root" : "@path:" + parentPath);
+                o.put("count", counts.get(path));
+                albums.put(o);
+            }
+            root.put("success", true); root.put("albums", albums);
+        } catch (Throwable t) {
+            try { root.put("success", false); root.put("error", t.toString()); root.put("albums", new JSONArray()); } catch (Throwable ignored) {}
+        }
+        return root.toString();
+    }
+
+    // Accepts legacy numeric bucket IDs or '@path:' relative paths. Paths include descendants.
+    public static String queryImagesJson(int offset, int limit, String bucketId) {
         JSONObject root = new JSONObject();
         try {
             Activity a = activity();
@@ -33,7 +90,20 @@ public class MemoryRoomMediaStoreBridge {
                 MediaStore.Images.Media.DATE_TAKEN, MediaStore.Images.Media.DATE_MODIFIED
             };
             String sort = MediaStore.Images.Media.DATE_MODIFIED + " DESC";
-            try (Cursor cursor = cr.query(collection, projection, null, null, sort)) {
+            boolean filtered = bucketId != null && bucketId.length() > 0 && !"@all".equals(bucketId);
+            String selection = null;
+            String[] selectionArgs = null;
+            if (filtered && bucketId.startsWith("@path:")) {
+                String path = bucketId.substring("@path:".length());
+                if (!path.endsWith("/")) path += "/";
+                path = path.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+                selection = MediaStore.Images.Media.RELATIVE_PATH + " LIKE ? ESCAPE '\\'";
+                selectionArgs = new String[] { path + "%" };
+            } else if (filtered) {
+                selection = MediaStore.Images.Media.BUCKET_ID + " = ?";
+                selectionArgs = new String[] { bucketId };
+            }
+            try (Cursor cursor = cr.query(collection, projection, selection, selectionArgs, sort)) {
                 int total = cursor == null ? 0 : cursor.getCount();
                 JSONArray items = new JSONArray();
                 if (cursor != null && cursor.moveToPosition(Math.max(0, offset))) {
