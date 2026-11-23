@@ -14,7 +14,7 @@ namespace
 constexpr int32 SolidTextureSize = 4;
 // Wide enough for the vignette in MakeVerticalGradientTexture to fall off smoothly under
 // bilinear filtering instead of banding across a panel this size.
-constexpr int32 GradientTextureWidth = 24;
+constexpr int32 GlassGradientTextureWidth = 24;
 
 UTexture2D* PaintTexture(int32 Width, int32 Height, TFunctionRef<FColor(int32 X, int32 Y)> Paint)
 {
@@ -103,7 +103,7 @@ void UpdateSolidTexture(UTexture2D* Texture, const FLinearColor& Color)
 UTexture2D* MakeVerticalGradientTexture(const FLinearColor& Top, const FLinearColor& Bottom, int32 Rows, float GlowBias, bool bFlip)
 {
 	const int32 Height = FMath::Clamp(Rows, 2, 1024);
-	const int32 Width = GradientTextureWidth;
+	const int32 Width = GlassGradientTextureWidth;
 	const float SafeBias = FMath::Max(GlowBias, 0.05f);
 	return PaintTexture(Width, Height, [&](int32 X, int32 Y)
 	{

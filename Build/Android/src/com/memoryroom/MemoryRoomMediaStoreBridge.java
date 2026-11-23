@@ -16,7 +16,50 @@ import java.io.InputStream;
 public class MemoryRoomMediaStoreBridge {
     private static Activity activity() { return com.epicgames.unreal.GameActivity.Get(); }
 
-    public static String queryImagesJson(int offset, int limit) {
+    // Lists the image albums (MediaStore buckets) with their image counts, biggest first.
+    public static String queryAlbumsJson() {
+        JSONObject root = new JSONObject();
+        try {
+            Activity a = activity();
+            if (a == null) {
+                throw new IllegalStateException("GameActivity is null");
+            }
+
+            ContentResolver cr = a.getContentResolver();
+            String[] projection = new String[] {
+                MediaStore.Images.Media.BUCKET_ID, MediaStore.Images.Media.BUCKET_DISPLAY_NAME
+            };
+            java.util.LinkedHashMap<String, String> names = new java.util.LinkedHashMap<>();
+            final java.util.HashMap<String, Integer> counts = new java.util.HashMap<>();
+            try (Cursor cursor = cr.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, projection, null, null, null)) {
+                while (cursor != null && cursor.moveToNext()) {
+                    if (cursor.isNull(0)) continue;
+                    String id = cursor.getString(0);
+                    String name = cursor.getString(1);
+                    if (!names.containsKey(id)) names.put(id, name == null ? "" : name);
+                    Integer c = counts.get(id);
+                    counts.put(id, c == null ? 1 : c + 1);
+                }
+            }
+            java.util.ArrayList<String> ids = new java.util.ArrayList<>(names.keySet());
+            java.util.Collections.sort(ids, new java.util.Comparator<String>() {
+                @Override public int compare(String x, String y) { return counts.get(y) - counts.get(x); }
+            });
+            JSONArray albums = new JSONArray();
+            for (String id : ids) {
+                JSONObject o = new JSONObject();
+                o.put("id", id); o.put("name", names.get(id)); o.put("count", counts.get(id));
+                albums.put(o);
+            }
+            root.put("success", true); root.put("albums", albums);
+        } catch (Throwable t) {
+            try { root.put("success", false); root.put("error", t.toString()); root.put("albums", new JSONArray()); } catch (Throwable ignored) {}
+        }
+        return root.toString();
+    }
+
+    // bucketId empty or null = every image; otherwise only that album.
+    public static String queryImagesJson(int offset, int limit, String bucketId) {
         JSONObject root = new JSONObject();
         try {
             Activity a = activity();
@@ -33,7 +76,10 @@ public class MemoryRoomMediaStoreBridge {
                 MediaStore.Images.Media.DATE_TAKEN, MediaStore.Images.Media.DATE_MODIFIED
             };
             String sort = MediaStore.Images.Media.DATE_MODIFIED + " DESC";
-            try (Cursor cursor = cr.query(collection, projection, null, null, sort)) {
+            boolean filtered = bucketId != null && bucketId.length() > 0;
+            String selection = filtered ? MediaStore.Images.Media.BUCKET_ID + " = ?" : null;
+            String[] selectionArgs = filtered ? new String[] { bucketId } : null;
+            try (Cursor cursor = cr.query(collection, projection, selection, selectionArgs, sort)) {
                 int total = cursor == null ? 0 : cursor.getCount();
                 JSONArray items = new JSONArray();
                 if (cursor != null && cursor.moveToPosition(Math.max(0, offset))) {

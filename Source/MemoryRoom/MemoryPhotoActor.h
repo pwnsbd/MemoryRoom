@@ -114,6 +114,10 @@ public:
 	UFUNCTION(BlueprintCallable, BlueprintPure, Category = "Memory Photo")
 	bool IsExpanded() const { return bExpanded; }
 
+	// True when nothing is driving this actor but its layout slot: not opened, hovered, held,
+	// animating or collapsing. The gallery skips re-applying an unchanged layout to such actors.
+	bool IsLayoutAtRest() const { return !bExpanded && !bHovered && !bAnimating && !bHoverFollowing && !bPendingCollapse; }
+
 	// True while this actor is a standalone photo someone freely placed in the room (see
 	// AMemoryRoomManager::PlacePhotoInWorld), rather than a pooled actor showing whatever the
 	// scrolling gallery assigns it. Unlike IsExpanded(), this stays true at rest - the gallery's

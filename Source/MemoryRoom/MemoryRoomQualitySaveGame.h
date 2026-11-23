@@ -50,4 +50,13 @@ public:
 
 	UPROPERTY(BlueprintReadWrite, Category = "Memory Room|Settings")
 	EMemoryRoomThemeId ThemeId = EMemoryRoomThemeId::Hearth;
+
+	// Ambient particle style (Dust / Leaves) chosen in the settings menu.
+	UPROPERTY(BlueprintReadWrite, Category = "Memory Room|Settings")
+	EMemoryRoomMoteStyle ParticleStyle = EMemoryRoomMoteStyle::Dust;
+
+	// Which album the gallery shows: MediaStore bucket id on Android, folder path on PC.
+	// Empty = all photos.
+	UPROPERTY(BlueprintReadWrite, Category = "Memory Room|Settings")
+	FString PhotoAlbumId;
 };

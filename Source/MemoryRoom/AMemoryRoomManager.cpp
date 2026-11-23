@@ -627,6 +627,7 @@ void AMemoryRoomManager::BeginPlay()
 
 	// Restore the player's saved settings-panel choices and push them into the world.
 	ApplyUserSettings();
+	RefreshAlbumList();
 
 	// Independent of the gallery scan below - a placed photo is addressed by its own saved
 	// absolute path, not a logical index into the discovered library.
@@ -651,7 +652,14 @@ void AMemoryRoomManager::BeginPlay()
 		{
 			if (!bIsLoadingGallery && GalleryPhotoFiles.IsEmpty())
 			{
-				TryStartAndroidFolderLoad();
+				if (!GetActiveBucketId().IsEmpty())
+				{
+					StartAndroidMediaStoreDiagnosticLoad();
+				}
+				else
+				{
+					TryStartAndroidFolderLoad();
+				}
 			}
 		}));
 	}
@@ -741,6 +749,7 @@ void AMemoryRoomManager::SnapPlayerPawnToFloor()
 void AMemoryRoomManager::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+	TickTurn(DeltaTime);
 	TickLocomotion(DeltaTime);
 	RefreshCachedHelixCenterLocation();
 
@@ -750,7 +759,12 @@ void AMemoryRoomManager::Tick(float DeltaTime)
 		ScrollVelocity = 0.0f;
 	}
 
-	const float CombinedScrollInput = ScrollInputAmount + HeldScrollInputAmount;
+	// Turning takes priority over scrolling: a diagonal or imperfect sideways push on the same
+	// stick would otherwise rotate the room and move the gallery at once, which is a reliable
+	// way to make someone motion-sick in VR. Any real turn deflection zeroes scroll for the
+	// frame rather than blending the two.
+	const bool bTurningNow = FMath::Abs(TurnInputX) > 0.15f;
+	const float CombinedScrollInput = bTurningNow ? 0.0f : (ScrollInputAmount + HeldScrollInputAmount);
 	const bool bHasScrollInput = !FMath::IsNearlyZero(CombinedScrollInput);
 	if (bHasScrollInput)
 	{
@@ -1028,8 +1042,9 @@ void AMemoryRoomManager::JumpToNewestPhoto()
 void AMemoryRoomManager::ReloadPhotoLibrary()
 {
 	OnPhotoLibraryReloadStarted.Broadcast();
+	RefreshAlbumList();
 #if PLATFORM_ANDROID
-	if (TryStartAndroidFolderLoad())
+	if (GetActiveBucketId().IsEmpty() && TryStartAndroidFolderLoad())
 	{
 		OnPhotoLibraryReloadCompleted.Broadcast(NumberOfPhotos, true);
 		return;
@@ -1080,6 +1095,7 @@ void AMemoryRoomManager::ReloadPhotoLibrary()
 			return;
 		}
 		const int32 QueryLimit = FMath::Max(Manager->MaxPhotosToLoad > 0 ? Manager->MaxPhotosToLoad : 1000, 1);
+		Manager->ApplyAlbumFilterToPhotoSource();
 		Manager->PhotoSource->QueryPhotosAsync(0, QueryLimit, FMemoryPhotoMetadataPageCallback::CreateLambda([WeakThis, RequestGeneration](bool bSuccess, const TArray<FMemoryPhotoMetadata>& Photos, int32 TotalCount)
 		{
 			AMemoryRoomManager* M = WeakThis.Get();
@@ -1620,6 +1636,8 @@ void AMemoryRoomManager::ApplyTheme()
 
 	if (AMemoryRoomDustActor* Dust = FindDustActor())
 	{
+		// The theme sets a default style, but the user's menu choice always wins.
+		Dust->SetMoteStyle(ParticleStyle);
 		Dust->SetDustTint(Theme->DustTint);
 	}
 
@@ -1712,9 +1730,20 @@ void AMemoryRoomManager::GetUserSettingParts(EMemoryRoomUserSetting Setting, FTe
 		return Row(TEXT("Thumbnail Quality"), Q);
 	}
 	case EMemoryRoomUserSetting::Theme:
-		return Row(TEXT("Theme"), FallbackThemeId == EMemoryRoomThemeId::Void ? TEXT("Void") : TEXT("Hearth"));
+		// Enum entry keeps its old name (Blueprint may reference it); the row is now the particle style.
+		return Row(TEXT("Particles"), ParticleStyle == EMemoryRoomMoteStyle::Leaf ? TEXT("Leaves") : TEXT("Dust"));
 	case EMemoryRoomUserSetting::Float:
 		return Row(TEXT("Float"), bFloatEnabled ? TEXT("On") : TEXT("Off"));
+	case EMemoryRoomUserSetting::PhotoAlbum:
+	{
+		const FMemoryRoomAlbum* Selected = SelectedAlbumId.IsEmpty() ? nullptr : Albums.FindByPredicate([this](const FMemoryRoomAlbum& A) { return A.Id == SelectedAlbumId; });
+		if (!Selected)
+		{
+			return Row(TEXT("Photos"), Albums.Num() > 1 ? TEXT("All photos") : TEXT("All"));
+		}
+		const FString ShortName = Selected->Name.Len() > 18 ? Selected->Name.Left(17) + TEXT("..") : Selected->Name;
+		return Row(TEXT("Photos"), FString::Printf(TEXT("%s (%d)"), *ShortName, Selected->Count));
+	}
 	default:
 		break;
 	}
@@ -1759,13 +1788,31 @@ void AMemoryRoomManager::AdjustUserSetting(EMemoryRoomUserSetting Setting, int32
 		CycleThumbnailQuality();
 		break;
 	case EMemoryRoomUserSetting::Theme:
-		// Only two built-in themes exist right now, so either arrow just swaps between them -
-		// same "ignore Direction's sign" idea ThumbnailQuality's cycle uses above.
-		FallbackThemeId = (FallbackThemeId == EMemoryRoomThemeId::Void) ? EMemoryRoomThemeId::Hearth : EMemoryRoomThemeId::Void;
+		// Two styles, so either arrow just swaps between them.
+		ParticleStyle = (ParticleStyle == EMemoryRoomMoteStyle::Dust) ? EMemoryRoomMoteStyle::Leaf : EMemoryRoomMoteStyle::Dust;
 		break;
 	case EMemoryRoomUserSetting::Float:
 		bFloatEnabled = !bFloatEnabled;
 		break;
+	case EMemoryRoomUserSetting::PhotoAlbum:
+	{
+		// Cycles the cached list (index 0 = all photos); with no albums it does nothing. The
+		// reload is debounced so stepping past several albums only loads the one you stop on.
+		if (Albums.Num() > 1)
+		{
+			int32 Current = Albums.IndexOfByPredicate([this](const FMemoryRoomAlbum& A) { return A.Id == SelectedAlbumId; });
+			Current = FMath::Max(Current, 0);
+			const int32 AlbumCount = Albums.Num();
+			Current = (Current + (Direction < 0 ? -1 : 1) + AlbumCount) % AlbumCount;
+			SelectedAlbumId = Albums[Current].Id;
+			ScheduleAlbumReload();
+		}
+		if (Albums.Num() <= 1 || FPlatformTime::Seconds() - LastAlbumRefreshSeconds > 15.0)
+		{
+			RefreshAlbumList();
+		}
+		break;
+	}
 	default:
 		break;
 	}
@@ -1803,12 +1850,10 @@ void AMemoryRoomManager::PushUserSettingToWorld(EMemoryRoomUserSetting Setting, 
 		}
 		break;
 	case EMemoryRoomUserSetting::Theme:
-		// ResolveTheme prefers CurrentTheme unconditionally (see ApplyTheme), so this has no
-		// visible effect once a real theme asset is ever assigned there - same as today, just
-		// now reachable live instead of only at BeginPlay. Clearing the cached ActiveTheme forces
-		// ResolveTheme to re-synthesise off the new FallbackThemeId instead of reusing the old one.
-		ActiveTheme = nullptr;
-		ApplyTheme();
+		if (AMemoryRoomDustActor* Dust = FindDustActor())
+		{
+			Dust->SetMoteStyle(ParticleStyle);
+		}
 		break;
 	default:
 		break;
@@ -1827,22 +1872,17 @@ void AMemoryRoomManager::ApplyUserSettings()
 			MaximumScrollSpeed = FMath::Clamp(Save->ScrollSpeed, 2.0f, 30.0f);
 			PhotoGlowLightIntensity = FMath::Clamp(Save->NightPhotoGlow, 0.0f, 14.0f);
 			DustAmountLevel = FMath::Clamp(Save->DustAmountLevel, 0, 3);
-			// BeginPlay calls ApplyTheme() before this (see the order there), so it has already
-			// synthesised and cached ActiveTheme off the default FallbackThemeId - if the saved
-			// choice differs, clear that cache and re-resolve now so the room opens on whichever
-			// theme was actually chosen last, not always Hearth.
-			if (FallbackThemeId != Save->ThemeId)
-			{
-				FallbackThemeId = Save->ThemeId;
-				ActiveTheme = nullptr;
-				ApplyTheme();
-			}
+			SelectedAlbumId = Save->PhotoAlbumId;
+			// The app always uses Hearth, so a saved ThemeId (e.g. the retired Void) is ignored.
+			ParticleStyle = Save->ParticleStyle;
 		}
 	}
 
 	if (AMemoryRoomDustActor* Dust = FindDustActor())
 	{
 		Dust->SetDensityLevel(DustAmountLevel);
+		// BeginPlay's ApplyTheme() ran before this with the default style; apply the saved one.
+		Dust->SetMoteStyle(ParticleStyle);
 	}
 	LastAppliedPhotoBrightness = -1.0f;
 }
@@ -1858,7 +1898,9 @@ void AMemoryRoomManager::SaveUserSettings() const
 	Save->ScrollSpeed = MaximumScrollSpeed;
 	Save->NightPhotoGlow = PhotoGlowLightIntensity;
 	Save->DustAmountLevel = DustAmountLevel;
-	Save->ThemeId = FallbackThemeId;
+	Save->ThemeId = EMemoryRoomThemeId::Hearth;
+	Save->ParticleStyle = ParticleStyle;
+	Save->PhotoAlbumId = SelectedAlbumId;
 	UGameplayStatics::SaveGameToSlot(Save, MemoryRoomSaveSlot, 0);
 }
 
@@ -1943,11 +1985,40 @@ void AMemoryRoomManager::ScanPhotoFolder()
 	FPaths::NormalizeDirectoryName(FolderToScan);
 
 	IPlatformFile& PlatformFile = FPlatformFileManager::Get().GetPlatformFile();
+#if !PLATFORM_ANDROID
+	if (!PlatformFile.DirectoryExists(*FolderToScan))
+	{
+		// Scanning runs once per load, not per frame, so this warns once. PhotoFolderPath itself
+		// is left alone; only this scan falls back to the user's Pictures folder.
+		FString PicturesFolder = FPaths::Combine(FPlatformProcess::UserDir(), TEXT(".."), TEXT("Pictures"));
+		FPaths::CollapseRelativeDirectories(PicturesFolder);
+		FPaths::NormalizeDirectoryName(PicturesFolder);
+		if (!PicturesFolder.IsEmpty() && PlatformFile.DirectoryExists(*PicturesFolder))
+		{
+			UE_LOG(LogMemoryRoom, Warning, TEXT("%s PhotoFolderPath does not exist: %s. Falling back to: %s"), *GetName(), *FolderToScan, *PicturesFolder);
+			FolderToScan = PicturesFolder;
+		}
+		else
+		{
+			UE_LOG(LogMemoryRoom, Warning, TEXT("%s PhotoFolderPath does not exist: %s, and the Pictures fallback (%s) is not available either."), *GetName(), *FolderToScan, *PicturesFolder);
+			return;
+		}
+	}
+#else
 	if (!PlatformFile.DirectoryExists(*FolderToScan))
 	{
 		UE_LOG(LogMemoryRoom, Warning, TEXT("%s cannot scan photos because folder does not exist: %s"), *GetName(), *FolderToScan);
 		return;
 	}
+#endif
+
+#if !PLATFORM_ANDROID
+	// A chosen album is a subfolder of the folder resolved above; a vanished one falls back to it.
+	if (!SelectedAlbumId.IsEmpty() && PlatformFile.DirectoryExists(*SelectedAlbumId))
+	{
+		FolderToScan = SelectedAlbumId;
+	}
+#endif
 
 	UE_LOG(LogMemoryRoom, Log, TEXT("%s scanning photo folder: %s"), *GetName(), *FolderToScan);
 
@@ -1983,10 +2054,165 @@ void AMemoryRoomManager::ScanPhotoFolder()
 	UE_LOG(LogMemoryRoom, Log, TEXT("%s discovered %d supported image file(s) in: %s"), *GetName(), DiscoveredPhotoFiles.Num(), *FolderToScan);
 }
 
+namespace
+{
+	bool IsSupportedPhotoExtension(const FString& FileName)
+	{
+		const FString Extension = FPaths::GetExtension(FileName, false).ToLower();
+		return Extension == TEXT("jpg") || Extension == TEXT("jpeg") || Extension == TEXT("png") || Extension == TEXT("cr2");
+	}
+
+	int32 CountPhotosInFolder(const FString& Folder)
+	{
+		TArray<FString> Files;
+		IFileManager::Get().FindFiles(Files, *FPaths::Combine(Folder, TEXT("*.*")), true, false);
+		int32 Count = 0;
+		for (const FString& File : Files)
+		{
+			if (IsSupportedPhotoExtension(File)) ++Count;
+		}
+		return Count;
+	}
+
+	// Id of the headset-folder album on Android (MediaStore bucket ids are numeric, so no clash).
+	const TCHAR* const HeadsetFolderAlbumId = TEXT("@folder");
+}
+
+void AMemoryRoomManager::RefreshAlbumList()
+{
+	const int32 Generation = ++AlbumEnumerationGeneration;
+	LastAlbumRefreshSeconds = FPlatformTime::Seconds();
+
+	FString Root = PhotoFolderPath;
+#if PLATFORM_ANDROID
+	// The headset folder is an album only while it is the active photo source.
+	Root = bAndroidUsePhotoFolder ? ResolveAndroidPhotoFolderPath() : FString();
+#endif
+	Root.TrimStartAndEndInline();
+
+	TWeakObjectPtr<AMemoryRoomManager> WeakThis(this);
+	AsyncTask(ENamedThreads::AnyBackgroundThreadNormalTask, [WeakThis, Generation, Root]()
+	{
+		TArray<FMemoryRoomAlbum> Found;
+		FString Folder = Root;
+		FPaths::NormalizeDirectoryName(Folder);
+		IFileManager& FileManager = IFileManager::Get();
+#if !PLATFORM_ANDROID
+		// Same fallback ScanPhotoFolder uses: a missing PhotoFolderPath lists the Pictures subfolders.
+		if (Folder.IsEmpty() || !FileManager.DirectoryExists(*Folder))
+		{
+			Folder = FPaths::Combine(FPlatformProcess::UserDir(), TEXT(".."), TEXT("Pictures"));
+			FPaths::CollapseRelativeDirectories(Folder);
+			FPaths::NormalizeDirectoryName(Folder);
+		}
+		if (!Folder.IsEmpty() && FileManager.DirectoryExists(*Folder))
+		{
+			TArray<FString> SubFolders;
+			FileManager.FindFiles(SubFolders, *FPaths::Combine(Folder, TEXT("*")), false, true);
+			SubFolders.Sort([](const FString& L, const FString& R) { return L.Compare(R, ESearchCase::IgnoreCase) < 0; });
+			for (const FString& Sub : SubFolders)
+			{
+				FString Path = FPaths::Combine(Folder, Sub);
+				FPaths::NormalizeDirectoryName(Path);
+				const int32 Count = CountPhotosInFolder(Path);
+				if (Count > 0)
+				{
+					FMemoryRoomAlbum Album;
+					Album.Id = Path;
+					Album.Name = Sub;
+					Album.Count = Count;
+					Found.Add(Album);
+				}
+			}
+		}
+#else
+		if (!Folder.IsEmpty() && FileManager.DirectoryExists(*Folder))
+		{
+			const int32 Count = CountPhotosInFolder(Folder);
+			if (Count > 0)
+			{
+				FMemoryRoomAlbum Album;
+				Album.Id = HeadsetFolderAlbumId;
+				Album.Name = TEXT("Headset folder");
+				Album.Count = Count;
+				Found.Add(Album);
+			}
+		}
+#endif
+		AsyncTask(ENamedThreads::GameThread, [WeakThis, Generation, Found = MoveTemp(Found)]() mutable
+		{
+			AMemoryRoomManager* M = WeakThis.Get();
+			if (!M || M->AlbumEnumerationGeneration != Generation) return;
+#if PLATFORM_ANDROID
+			if (!M->PhotoSource)
+			{
+				M->PhotoSource = MakeUnique<FAndroidMediaStorePhotoSource>();
+			}
+			static_cast<FAndroidMediaStorePhotoSource*>(M->PhotoSource.Get())->QueryAlbumsAsync(
+				[WeakThis, Generation, Found = MoveTemp(Found)](bool bSuccess, TArray<FMemoryRoomAlbum> Buckets) mutable
+				{
+					AMemoryRoomManager* Manager = WeakThis.Get();
+					if (!Manager || Manager->AlbumEnumerationGeneration != Generation) return;
+					Found.Append(Buckets);
+					// Without media permission the bucket query fails; the saved choice must survive that.
+					Manager->FinishAlbumList(MoveTemp(Found), bSuccess);
+				});
+#else
+			M->FinishAlbumList(MoveTemp(Found), true);
+#endif
+		});
+	});
+}
+
+void AMemoryRoomManager::FinishAlbumList(TArray<FMemoryRoomAlbum>&& Found, bool bComplete)
+{
+	Albums.Reset();
+	FMemoryRoomAlbum AllPhotos;
+	AllPhotos.Name = TEXT("All photos");
+	Albums.Add(AllPhotos);
+	Albums.Append(MoveTemp(Found));
+
+	if (bComplete && !SelectedAlbumId.IsEmpty() && !Albums.ContainsByPredicate([this](const FMemoryRoomAlbum& A) { return A.Id == SelectedAlbumId; }))
+	{
+		UE_LOG(LogMemoryRoom, Log, TEXT("%s saved photo album '%s' no longer exists; showing all photos."), *GetName(), *SelectedAlbumId);
+		SelectedAlbumId.Reset();
+		SaveUserSettings();
+		ScheduleAlbumReload();
+	}
+	OnUserSettingsChanged.Broadcast();
+}
+
+void AMemoryRoomManager::ScheduleAlbumReload()
+{
+	if (UWorld* World = GetWorld())
+	{
+		World->GetTimerManager().SetTimer(AlbumReloadTimerHandle, FTimerDelegate::CreateWeakLambda(this, [this]() { ReloadPhotoLibrary(); }), 0.6f, false);
+	}
+}
+
+FString AMemoryRoomManager::GetActiveBucketId() const
+{
+#if PLATFORM_ANDROID
+	return SelectedAlbumId == HeadsetFolderAlbumId ? FString() : SelectedAlbumId;
+#else
+	return FString();
+#endif
+}
+
+void AMemoryRoomManager::ApplyAlbumFilterToPhotoSource()
+{
+#if PLATFORM_ANDROID
+	if (PhotoSource)
+	{
+		static_cast<FAndroidMediaStorePhotoSource*>(PhotoSource.Get())->SetBucketFilter(GetActiveBucketId());
+	}
+#endif
+}
+
 bool AMemoryRoomManager::BuildGalleryFromDiscoveredPhotos()
 {
 #if PLATFORM_ANDROID
-	if (TryStartAndroidFolderLoad())
+	if (GetActiveBucketId().IsEmpty() && TryStartAndroidFolderLoad())
 	{
 		return true;
 	}
@@ -2129,6 +2355,7 @@ bool AMemoryRoomManager::StartAndroidMediaStoreDiagnosticLoad()
 		}
 
 		const int32 QueryLimit = FMath::Max(Manager->MaxPhotosToLoad > 0 ? Manager->MaxPhotosToLoad : 1000, 1);
+		Manager->ApplyAlbumFilterToPhotoSource();
 		Manager->PhotoSource->QueryPhotosAsync(0, QueryLimit, FMemoryPhotoMetadataPageCallback::CreateLambda([WeakThis](bool bSuccess, const TArray<FMemoryPhotoMetadata>& Photos, int32 TotalCount)
 		{
 			AMemoryRoomManager* M = WeakThis.Get();
@@ -2830,9 +3057,12 @@ bool AMemoryRoomManager::LoadFirstDiscoveredPhoto()
 
 	PhotoToLoad->SetActorHiddenInGame(false);
 	PhotoToLoad->AssignPhotoIndex(0);
-	const bool bLoaded = PhotoToLoad->LoadImageFromFile(FirstPhotoPath);
+	// Header read now, pixels decoded on a worker thread; the photo keeps its placeholder until
+	// the texture lands. A synchronous decode here stalled the game thread at startup.
+	const bool bLoaded = PhotoToLoad->PrepareFromFile(FirstPhotoPath);
 	if (bLoaded)
 	{
+		PhotoToLoad->LoadImageFromFileAsync(FirstPhotoPath, FMath::Max(MaximumRuntimeTextureDimension, 512));
 		NumberOfPhotos = FMath::Max(NumberOfPhotos, SpawnedPhotos.Num());
 		RebuildPhotoPathCache();
 		LayoutSpawnedPhotos();
@@ -2930,6 +3160,60 @@ void AMemoryRoomManager::StopLocomotionMoveInput()
 	LocoInputY = 0.0f;
 }
 
+void AMemoryRoomManager::SetTurnInput(float Value)
+{
+	TurnInputX = Value;
+}
+
+void AMemoryRoomManager::StopTurnInput()
+{
+	TurnInputX = 0.0f;
+}
+
+void AMemoryRoomManager::TickTurn(float DeltaSeconds)
+{
+	UWorld* World = GetWorld();
+	APlayerController* PC = World ? World->GetFirstPlayerController() : nullptr;
+	APawn* Pawn = PC ? PC->GetPawn() : nullptr;
+
+	// Throttled diagnostic: shows whether SetTurnInput is even reaching this class, same as
+	// the "Loco diag" line above - fires regardless of pawn/deadzone so a silent Blueprint or
+	// Input Mapping wiring gap (raw TurnInputX stuck at 0) is visible without a debugger.
+	static float TurnDiagAcc = 0.0f;
+	TurnDiagAcc += DeltaSeconds;
+	if (TurnDiagAcc > 1.0f)
+	{
+		TurnDiagAcc = 0.0f;
+		UE_LOG(LogMemoryRoom, Warning, TEXT("Turn diag: pawn=%s turnInput=%.3f speed=%.1f"),
+			*GetNameSafe(Pawn), TurnInputX, TurnSpeedDegPerSec);
+	}
+
+	if (!Pawn || DeltaSeconds <= 0.0f)
+	{
+		return;
+	}
+
+	const float Stick = FMath::Abs(TurnInputX) > 0.15f ? TurnInputX : 0.0f;
+	if (FMath::IsNearlyZero(Stick))
+	{
+		return;
+	}
+
+	const float YawDelta = Stick * TurnSpeedDegPerSec * DeltaSeconds;
+
+	FVector HeadLocation = FVector::ZeroVector;
+	FRotator HeadRotation = FRotator::ZeroRotator;
+	PC->GetPlayerViewPoint(HeadLocation, HeadRotation);
+
+	// Rotate the pawn about the player's actual head position, not the pawn's own capsule
+	// origin - roomscale tracking means the head can be anywhere inside the play space, so
+	// pivoting on the capsule would swing the room around you instead of spinning it in place.
+	const FVector HeadToPawn = Pawn->GetActorLocation() - HeadLocation;
+	const FVector RotatedOffset = HeadToPawn.RotateAngleAxis(YawDelta, FVector::UpVector);
+	Pawn->SetActorLocation(HeadLocation + RotatedOffset, /*bSweep*/ false);
+	Pawn->AddActorWorldRotation(FRotator(0.0f, YawDelta, 0.0f));
+}
+
 void AMemoryRoomManager::TickLocomotion(float DeltaSeconds)
 {
 	UWorld* World = GetWorld();
@@ -2991,6 +3275,25 @@ void AMemoryRoomManager::TickLocomotion(float DeltaSeconds)
 		Target.Z = FMath::FInterpTo(Current.Z, FloorZ, DeltaSeconds, 3.0f);
 	}
 	Target.Z = FMath::Clamp(Target.Z, FloorZ, CeilingZ);
+
+	// Horizontal containment: never let the player drift past the photo ring - it tapers with
+	// height exactly like EvaluateGallerySpiralPosition, so the boundary tapers along with it.
+	{
+		const FVector CenterLocation = GetHelixCenterLocation();
+		const float HeightAboveBase = FMath::Max(Target.Z - CenterLocation.Z - PhotoHeight, 0.0f);
+		const float RingTaperAlpha = FMath::Clamp(HeightAboveBase / FMath::Max(GallerySpiralTaperHeight, 1.0f), 0.0f, 1.0f);
+		const float RingRadius = FMath::Lerp(GallerySpiralBaseRadius, GallerySpiralTopRadius, RingTaperAlpha);
+		const float MaxRadius = FMath::Max(RingRadius - SpiralBoundaryMarginCm, 10.0f);
+
+		FVector2D Offset2D(Target.X - CenterLocation.X, Target.Y - CenterLocation.Y);
+		const float DistFromCenter = Offset2D.Size();
+		if (DistFromCenter > MaxRadius && DistFromCenter > KINDA_SMALL_NUMBER)
+		{
+			const FVector2D Clamped = Offset2D * (MaxRadius / DistFromCenter);
+			Target.X = CenterLocation.X + Clamped.X;
+			Target.Y = CenterLocation.Y + Clamped.Y;
+		}
+	}
 
 	// Keep-out ONLY while actively driving into a photo - never shove the player away from a
 	// photo they are holding (a grabbed photo pulled in close would otherwise push them off).
@@ -3889,6 +4192,43 @@ void AMemoryRoomManager::LayoutVirtualizedGallery()
 	int32 VisibleCount = 0;
 	int32 TexturedCount = 0;
 	const float FocusOpacityScale = FMath::Lerp(1.0f, FMath::Clamp(FocusOtherPhotoOpacity, 0.0f, 1.0f), FocusBlend);
+
+	// The layout pass also runs every frame while textures are still arriving, with nothing
+	// else moving. Hash every input to the transform/viewing state below; when it matches the
+	// last pass, photos already at rest in their slot keep what they have.
+	uint32 LayoutKey = GetTypeHash(ScrollOffset);
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(FocusOpacityScale));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(CachedHelixCenterLocation));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GetActorTransform().GetLocation()));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GetActorRotation().Euler()));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GallerySpiralDegreesPerUnit));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GallerySpiralRisePerUnit));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GallerySpiralBaseRadius));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GallerySpiralTopRadius));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GallerySpiralTaperHeight));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(PhotoHeight));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(PhotoRotationOffset.Euler()));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(MinPhotoScale));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(MaxPhotoScale));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(SizeVariationSeed));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GalleryBottomMargin));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GalleryWindowCount));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GalleryFadeTopCount));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(TopMaxBlurAmount));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GalleryPathOffsets.Num()));
+	LayoutKey = HashCombine(LayoutKey, GetTypeHash(GalleryPathOffsets.Last()));
+	for (const TObjectPtr<AMemoryPhotoActor>& PhotoPtr : SpawnedPhotos)
+	{
+		if (const AMemoryPhotoActor* Photo = PhotoPtr.Get())
+		{
+			// Index and eligibility both feed the key, so a reassigned, placed or newly
+			// freed actor always forces a full pass.
+			LayoutKey = HashCombine(LayoutKey, GetTypeHash(Photo->IsExpanded() || Photo->IsPlacedInWorld() ? INDEX_NONE - 1 : Photo->GetAssignedPhotoIndex()));
+		}
+	}
+	const bool bLayoutUnchanged = bHasVirtualLayoutKey && LayoutKey == LastVirtualLayoutKey;
+	LastVirtualLayoutKey = LayoutKey;
+	bHasVirtualLayoutKey = true;
 	for (const TObjectPtr<AMemoryPhotoActor>& PhotoPtr : SpawnedPhotos)
 	{
 		AMemoryPhotoActor* Photo = PhotoPtr.Get();
@@ -3914,13 +4254,23 @@ void AMemoryRoomManager::LayoutVirtualizedGallery()
 		const float PathOffset = GalleryPathOffsets.IsValidIndex(Index) ? GalleryPathOffsets[Index] : static_cast<float>(Index);
 		const float PathIndex = PathOffset + ScrollOffset;
 		const FPhotoViewingState ViewingState = BuildVirtualizedViewingState(PathIndex);
-		const float BaseScale = GetDeterministicPhotoScale(Index);
-		FTransform PhotoTransform = BuildVirtualizedPhotoTransform(Index, PathOffset + ScrollOffset);
-		PhotoTransform.SetScale3D(FVector(BaseScale * ViewingState.ScaleMultiplier));
-		Photo->SetLayoutTransform(PhotoTransform, ScrollOffset);
 
-		ApplyOrQueueGalleryThumbnail(Photo, Index, ActiveDecodes);
-		Photo->ApplyViewingWindowState(ViewingState.Opacity * FocusOpacityScale, ViewingState.ScaleMultiplier, ViewingState.bInteractive, ViewingState.BlurAmount);
+		if (bLayoutUnchanged && Photo->IsLayoutAtRest())
+		{
+			// Same inputs as the previous pass and nothing is animating this photo, so its
+			// transform and viewing state are already correct. Only texture work remains.
+			ApplyOrQueueGalleryThumbnail(Photo, Index, ActiveDecodes);
+		}
+		else
+		{
+			const float BaseScale = GetDeterministicPhotoScale(Index);
+			FTransform PhotoTransform = BuildVirtualizedPhotoTransform(Index, PathOffset + ScrollOffset);
+			PhotoTransform.SetScale3D(FVector(BaseScale * ViewingState.ScaleMultiplier));
+			Photo->SetLayoutTransform(PhotoTransform, ScrollOffset);
+
+			ApplyOrQueueGalleryThumbnail(Photo, Index, ActiveDecodes);
+			Photo->ApplyViewingWindowState(ViewingState.Opacity * FocusOpacityScale, ViewingState.ScaleMultiplier, ViewingState.bInteractive, ViewingState.BlurAmount);
+		}
 
 		if (ViewingState.bVisible)
 		{

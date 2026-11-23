@@ -15,14 +15,13 @@
 #include "GameFramework/PlayerController.h"
 #include "Math/RotationMatrix.h"
 #include "Materials/MaterialInterface.h"
-#include "Animation/AnimSequence.h"
-#include "Animation/AnimSingleNodeInstance.h"
 #include "Components/SkeletalMeshComponent.h"
-#include "Components/TextRenderComponent.h"
 #include "Engine/SkeletalMesh.h"
 #include "IMotionController.h"
 #include "MotionControllerComponent.h"
-#include "XRDeviceVisualizationComponent.h"
+#include "MemoryRoomMetaRig.h"
+#include "Components/StaticMeshComponent.h"
+#include "Engine/StaticMesh.h"
 #include "AMemoryRoomManager.h"
 #include "MemoryPhotoActor.h"
 #include "MemoryPanoramaActor.h"
@@ -110,6 +109,9 @@ void UMemoryRoomSelectionComponent::PostInitProperties()
 	ApplyDefaultComponentReferences();
 }
 
+// Tag on the runtime controllers UMemoryRoomMetaRigComponent builds; pointer lookups skip them.
+static const FName SelectionVisualGripTag(TEXT("MemoryRoomVisualGrip"));
+
 void UMemoryRoomSelectionComponent::BeginPlay()
 {
 	Super::BeginPlay();
@@ -118,334 +120,10 @@ void UMemoryRoomSelectionComponent::BeginPlay()
 	ResolveCameraComponent();
 	EnsurePointerComponents();
 	EnsureLeftPointerComponents();
-	EnsureHandVisuals();
-}
-
-void UMemoryRoomSelectionComponent::EnsureHandVisuals()
-{
-	AActor* Owner = GetOwner();
-	if (!bEnsureHandVisuals || !Owner)
+	MetaRig = NewObject<UMemoryRoomMetaRigComponent>(GetOwner(), TEXT("MemoryRoomMetaRig"));
+	if (MetaRig)
 	{
-		return;
-	}
-
-	TArray<UMotionControllerComponent*> Controllers;
-	Owner->GetComponents<UMotionControllerComponent>(Controllers);
-	if (Controllers.Num() == 0)
-	{
-		return;
-	}
-
-	USkeletalMesh* HandMesh = bUseHandMeshes ? LoadObject<USkeletalMesh>(nullptr, *HandMeshPath) : nullptr;
-	UAnimSequence* GraspAnim = HandMesh ? LoadObject<UAnimSequence>(nullptr, *HandGraspAnimPath) : nullptr;
-	if (bUseHandMeshes && !HandMesh)
-	{
-		UE_LOG(LogMemoryRoom, Warning, TEXT("%s could not load the hand mesh at %s; falling back to the controller model."), *GetNameSafe(this), *HandMeshPath);
-	}
-
-	TArray<UXRDeviceVisualizationComponent*> Existing;
-	Owner->GetComponents<UXRDeviceVisualizationComponent>(Existing);
-
-	// Whatever the hand that already works is doing is the house style: same model source,
-	// same custom mesh if it uses one, same material overrides. Copying it is what keeps the
-	// two hands looking like a pair instead of two different props. Only used when the hand
-	// meshes are unavailable and the controller models stay on.
-	const UXRDeviceVisualizationComponent* Style = Existing.Num() > 0 ? Existing[0] : nullptr;
-
-	for (UMotionControllerComponent* Controller : Controllers)
-	{
-		if (!Controller)
-		{
-			continue;
-		}
-
-		// Only the grip poses carry a hand. An aim pose sits at the same wrist and would
-		// draw a second hand floating in front of the first one.
-		const FName Source = Controller->GetTrackingMotionSource();
-		const bool bIsLeft = Source == IMotionController::LeftHandSourceId || Source == FName(TEXT("LeftGrip"));
-		const bool bIsRight = Source == IMotionController::RightHandSourceId || Source == FName(TEXT("RightGrip"));
-		if (!bIsLeft && !bIsRight)
-		{
-			continue;
-		}
-
-		// The left hand's transform is not trusted yet - see bUseHandMeshOnLeft - so it drops
-		// through to the stock controller model below until it has been recalibrated from the
-		// component's own Details panel rather than guessed at again.
-		if (HandMesh && (!bIsLeft || bUseHandMeshOnLeft))
-		{
-			// The hand replaces the controller model rather than sitting on top of it.
-			for (UXRDeviceVisualizationComponent* Visualization : Existing)
-			{
-				if (Visualization && Visualization->GetAttachParent() == Controller)
-				{
-					Visualization->SetIsVisualizationActive(false);
-					Visualization->SetVisibility(false, true);
-				}
-			}
-
-			const FName HandName = MakeUniqueObjectName(Owner, USkeletalMeshComponent::StaticClass(), *FString::Printf(TEXT("%sHand"), *Controller->GetName()));
-			USkeletalMeshComponent* Hand = NewObject<USkeletalMeshComponent>(Owner, HandName);
-			if (!Hand)
-			{
-				continue;
-			}
-
-			Hand->SetSkeletalMesh(HandMesh);
-			Hand->SetupAttachment(Controller);
-			Hand->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-			Hand->SetCastShadow(false);
-			Hand->SetRelativeLocation(HandRelativeLocation);
-			Hand->SetRelativeRotation(bIsLeft ? LeftHandRelativeRotation : RightHandRelativeRotation);
-			// Only the right-hand mesh and animations ship with this project, so the left
-			// hand is the same mesh mirrored across its own Y axis. The geometry is a mirror
-			// of the right either way, and this keeps one animation driving both hands
-			// instead of needing a mirror table the anim graph would have to own.
-			Hand->SetRelativeScale3D(bIsLeft ? FVector(1.0f, -1.0f, 1.0f) : FVector::OneVector);
-			Hand->RegisterComponent();
-
-			if (GraspAnim)
-			{
-				// Not played, scrubbed: the clip is the curl from open to fist, and the curl
-				// value below picks the frame. Looping is off and the rate is zero so nothing
-				// advances on its own.
-				Hand->PlayAnimation(GraspAnim, false);
-				Hand->SetPlayRate(0.0f);
-				Hand->SetPosition(0.0f, false);
-			}
-
-			if (bIsLeft)
-			{
-				LeftHandMeshComponent = Hand;
-			}
-			else
-			{
-				RightHandMeshComponent = Hand;
-			}
-
-			UE_LOG(LogMemoryRoom, Log, TEXT("%s built a hand mesh for %s (motion source %s, %s)."), *GetNameSafe(this), *Controller->GetName(), *Source.ToString(), bIsLeft ? TEXT("mirrored") : TEXT("as authored"));
-			continue;
-		}
-
-		UXRDeviceVisualizationComponent* Visualization = nullptr;
-		for (UXRDeviceVisualizationComponent* Candidate : Existing)
-		{
-			if (Candidate && Candidate->GetAttachParent() == Controller)
-			{
-				Visualization = Candidate;
-				break;
-			}
-		}
-
-		if (!Visualization)
-		{
-			const FName VisualizationName = MakeUniqueObjectName(Owner, UXRDeviceVisualizationComponent::StaticClass(), *FString::Printf(TEXT("%sVisualization"), *Controller->GetName()));
-			Visualization = NewObject<UXRDeviceVisualizationComponent>(Owner, VisualizationName);
-			if (!Visualization)
-			{
-				continue;
-			}
-
-			if (Style)
-			{
-				Visualization->DisplayModelSource = Style->DisplayModelSource;
-				Visualization->CustomDisplayMesh = Style->CustomDisplayMesh;
-				Visualization->DisplayMeshMaterialOverrides = Style->DisplayMeshMaterialOverrides;
-			}
-			Visualization->SetupAttachment(Controller);
-			// OnRegister reads MotionSource back off the parent controller, so the model that
-			// loads is the one for this hand.
-			Visualization->RegisterComponent();
-		}
-
-		// The left hand has no proper custom mesh yet - bUseHandMeshOnLeft is off pending real
-		// calibration (see memoryroom-left-hand-unresolved in project memory) - so it falls back
-		// to the bare stock controller model here, same as the right hand does when hand meshes
-		// are off entirely. This used to be force-hidden, back when the left controller was
-		// purely decorative (wrist/menu only); now that it is a real second pointer/grab hand
-		// (see TickHandInteraction), it needs to be visible like any other controller so there
-		// is something to see aiming with. Re-asserted every call, not just on first creation -
-		// this controller's visibility was toggled several times earlier in development, and a
-		// component instance still carrying an old hidden state should not survive into this.
-		Visualization->bIsVisualizationActive = true;
-		Visualization->SetVisibility(true, true);
-
-		UE_LOG(LogMemoryRoom, Log, TEXT("%s built a device visualization for %s (motion source %s, model source %s)."), *GetNameSafe(this), *Controller->GetName(), *Source.ToString(), *Visualization->DisplayModelSource.ToString());
-	}
-}
-
-void UMemoryRoomSelectionComponent::UpdateControllerCalibration(float DeltaTime)
-{
-	AActor* Owner = GetOwner();
-	UWorld* World = GetWorld();
-	if (!bShowControllerCalibration || !Owner || !World)
-	{
-		// Labels are built on demand, so switching the mode off just parks them out of sight.
-		for (UTextRenderComponent* Label : CalibrationLabels)
-		{
-			if (Label)
-			{
-				Label->SetVisibility(false);
-			}
-		}
-		return;
-	}
-
-	FVector ViewLocation = FVector::ZeroVector;
-	FRotator ViewRotation = FRotator::ZeroRotator;
-	if (APlayerController* PlayerController = World->GetFirstPlayerController())
-	{
-		PlayerController->GetPlayerViewPoint(ViewLocation, ViewRotation);
-	}
-
-	// Every motion controller on the pawn, not just the two that carry hands - an aim pose
-	// has its own axes and it is worth being able to see how they differ from the grip.
-	TArray<UMotionControllerComponent*> Controllers;
-	Owner->GetComponents<UMotionControllerComponent>(Controllers);
-
-	const float AxisLength = FMath::Max(CalibrationAxisLength, 1.0f);
-	int32 LabelIndex = 0;
-
-	for (UMotionControllerComponent* Controller : Controllers)
-	{
-		if (!Controller)
-		{
-			continue;
-		}
-
-		const FVector Origin = Controller->GetComponentLocation();
-
-		// Unreal's own gizmo colours, so an arrow here means what the same arrow means in the
-		// editor viewport: X red, Y green, Z blue. The lengths step down as well, so the axes
-		// stay tellable apart when a colour is washed out by the sky.
-		DrawDebugDirectionalArrow(World, Origin, Origin + Controller->GetForwardVector() * AxisLength, AxisLength * 0.28f, FColor::Red, false, -1.0f, 0, 0.4f);
-		DrawDebugDirectionalArrow(World, Origin, Origin + Controller->GetRightVector() * AxisLength * 0.75f, AxisLength * 0.28f, FColor::Green, false, -1.0f, 0, 0.4f);
-		DrawDebugDirectionalArrow(World, Origin, Origin + Controller->GetUpVector() * AxisLength * 0.55f, AxisLength * 0.28f, FColor::Blue, false, -1.0f, 0, 0.4f);
-
-		// Build labels lazily, one per controller, and reuse them from then on.
-		if (!CalibrationLabels.IsValidIndex(LabelIndex) || !CalibrationLabels[LabelIndex])
-		{
-			const FName LabelName = MakeUniqueObjectName(Owner, UTextRenderComponent::StaticClass(), *FString::Printf(TEXT("CalibrationLabel%d"), LabelIndex));
-			UTextRenderComponent* NewLabel = NewObject<UTextRenderComponent>(Owner, LabelName);
-			if (!NewLabel)
-			{
-				continue;
-			}
-			NewLabel->SetupAttachment(Owner->GetRootComponent());
-			NewLabel->SetHorizontalAlignment(EHTA_Center);
-			NewLabel->SetVerticalAlignment(EVRTA_TextCenter);
-			NewLabel->SetWorldSize(1.4f);
-			NewLabel->SetTextRenderColor(FColor(255, 240, 190));
-			NewLabel->SetCastShadow(false);
-			NewLabel->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-			NewLabel->RegisterComponent();
-			CalibrationLabels.SetNum(FMath::Max(CalibrationLabels.Num(), LabelIndex + 1));
-			CalibrationLabels[LabelIndex] = NewLabel;
-		}
-
-		UTextRenderComponent* Label = CalibrationLabels[LabelIndex];
-		++LabelIndex;
-
-		// Names the axis, not what it does - "forward"/"up" are exactly the thing the gizmo is
-		// for measuring, and this project has already found a controller where X is not
-		// forward and Z is not up. Asserting a direction in the label would just relabel the
-		// same confusion the arrows are meant to resolve.
-		FString Text = FString::Printf(TEXT("%s\nX red   Y green   Z blue"), *Controller->GetTrackingMotionSource().ToString());
-
-		// The reveal gate's own numbers, straight off the menu actor rather than recomputed,
-		// so what this reads out is exactly what the gate is acting on.
-		if (const AMemoryRoomMenuActor* Menu = ResolveMenuActorForCalibration())
-		{
-			if (Controller == Menu->GetAttachedWristComponent())
-			{
-				Text += TEXT("\n") + Menu->GetWristRevealDebugText();
-			}
-		}
-
-		Label->SetText(FText::FromString(Text));
-		Label->SetVisibility(true);
-		// Parked just off the controller and turned to face the headset, so it stays readable
-		// however the wrist is held - which is the whole point while rolling it about.
-		Label->SetWorldLocation(Origin + Controller->GetUpVector() * AxisLength * 0.9f);
-		// +X at the headset, same as the sky puck's own face-the-viewer code - no negation:
-		// ToViewer.Rotation() already points +X at the viewer, and text render components
-		// read forward along +X, so flipping it here was pointing the label away instead.
-		const FVector ToViewer = ViewLocation - Label->GetComponentLocation();
-		if (!ToViewer.IsNearlyZero())
-		{
-			Label->SetWorldRotation(ToViewer.Rotation());
-		}
-	}
-
-	// Any labels left over from a controller that has gone away.
-	for (int32 i = LabelIndex; i < CalibrationLabels.Num(); ++i)
-	{
-		if (CalibrationLabels[i])
-		{
-			CalibrationLabels[i]->SetVisibility(false);
-		}
-	}
-}
-
-AMemoryRoomMenuActor* UMemoryRoomSelectionComponent::ResolveMenuActorForCalibration() const
-{
-	UWorld* World = GetWorld();
-	if (!World)
-	{
-		return nullptr;
-	}
-	for (TActorIterator<AMemoryRoomMenuActor> It(World); It;)
-	{
-		return *It;
-	}
-	return nullptr;
-}
-
-void UMemoryRoomSelectionComponent::SetHandCurlInput(float GripValue, float TriggerValue)
-{
-	// Two inputs, one curl. The grip closes the hand the whole way; the trigger only pulls it
-	// part-way, so a trigger press reads as reaching for something and a grip reads as having
-	// hold of it. Whichever is asking for more curl wins.
-	const float FromGrip = FMath::Clamp(GripValue, 0.0f, 1.0f);
-	const float FromTrigger = FMath::Clamp(TriggerValue, 0.0f, 1.0f) * FMath::Clamp(TriggerCurlAmount, 0.0f, 1.0f);
-	AnalogHandCurl = FMath::Max(FromGrip, FromTrigger);
-}
-
-void UMemoryRoomSelectionComponent::UpdateHandCurl(float DeltaTime)
-{
-	if (!LeftHandMeshComponent && !RightHandMeshComponent)
-	{
-		return;
-	}
-
-	// The trigger is bound as a press, not an axis, so it gets a short pulse that eases back
-	// out - a tap of the finger. Wire SetHandCurlInput to the real axes and this is simply
-	// overtaken by the analog value.
-	TriggerPulseSeconds = FMath::Max(TriggerPulseSeconds - DeltaTime, 0.0f);
-	const float FromTriggerPulse = TriggerPulseSeconds > 0.0f ? FMath::Clamp(TriggerCurlAmount, 0.0f, 1.0f) : 0.0f;
-
-	// A held grab always wins: the fist has to be closed for as long as the photo is held,
-	// however the trigger and the analog inputs happen to be sitting.
-	TargetHandCurl = FMath::Max3(bGrabCurlHeld ? 1.0f : 0.0f, AnalogHandCurl, FromTriggerPulse);
-
-	// Snapping straight to the target looks like the fingers teleport, so ease in over
-	// HandCurlInterpSpeed. At the default this closes in about a tenth of a second - fast
-	// enough that the fist still lands on the frame the grab fires.
-	CurrentHandCurl = FMath::FInterpTo(CurrentHandCurl, TargetHandCurl, DeltaTime, FMath::Max(HandCurlInterpSpeed, 0.1f));
-
-	for (USkeletalMeshComponent* Hand : { LeftHandMeshComponent.Get(), RightHandMeshComponent.Get() })
-	{
-		if (!Hand)
-		{
-			continue;
-		}
-		if (const UAnimationAsset* Asset = Hand->GetSingleNodeInstance() ? Hand->GetSingleNodeInstance()->GetAnimationAsset() : nullptr)
-		{
-			if (const UAnimSequence* Sequence = Cast<UAnimSequence>(Asset))
-			{
-				Hand->SetPosition(CurrentHandCurl * Sequence->GetPlayLength(), false);
-			}
-		}
+		MetaRig->RegisterComponent();
 	}
 }
 
@@ -500,8 +178,6 @@ void UMemoryRoomSelectionComponent::TickComponent(float DeltaTime, ELevelTick Ti
 {
 	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
 
-	UpdateHandCurl(DeltaTime);
-	UpdateControllerCalibration(DeltaTime);
 	if (IsPanoramaOpen())
 	{
 		UpdateHoveredPhoto(HoveredPhoto, nullptr, FVector::ZeroVector);
@@ -516,6 +192,16 @@ void UMemoryRoomSelectionComponent::TickComponent(float DeltaTime, ELevelTick Ti
 
 	USceneComponent* RightPointer = ResolvePointerComponent();
 	USceneComponent* LeftPointer = ResolveLeftPointerComponent();
+	// The left RAY runs from the aim pose like the right one; LeftPointer (grip) stays for grab/hold.
+	USceneComponent* LeftAimPointer = nullptr;
+	if (MetaRig)
+	{
+		LeftAimPointer = MetaRig->GetLeftAimController();
+	}
+	if (!LeftAimPointer)
+	{
+		LeftAimPointer = LeftPointer;
+	}
 
 	if (AMemoryPhotoActor* Grabbed = GrabbedPhoto.Get())
 	{
@@ -543,7 +229,7 @@ void UMemoryRoomSelectionComponent::TickComponent(float DeltaTime, ELevelTick Ti
 	}
 
 	TickHandInteraction(EMemoryRoomHand::Right, RightPointer, PointerSplineComponent, BeamSplineMeshComponent, HitIndicatorComponent, true, HoveredMenu, HoveredSkyButton, HoveredPhoto);
-	TickHandInteraction(EMemoryRoomHand::Left, LeftPointer, LeftPointerSplineComponent, LeftBeamSplineMeshComponent, LeftHitIndicatorComponent, false, LeftHoveredMenu, LeftHoveredSkyButton, LeftHoveredPhoto);
+	TickHandInteraction(EMemoryRoomHand::Left, LeftAimPointer, LeftPointerSplineComponent, LeftBeamSplineMeshComponent, LeftHitIndicatorComponent, false, LeftHoveredMenu, LeftHoveredSkyButton, LeftHoveredPhoto);
 
 	if (AMemoryRoomManager* Manager = ResolveMemoryRoomManager())
 	{
@@ -664,9 +350,6 @@ void UMemoryRoomSelectionComponent::UpdatePinchZoom(float DeltaTime, USceneCompo
 void UMemoryRoomSelectionComponent::ActivateHoveredPhoto(EMemoryRoomHand Hand)
 {
 	if (IsPanoramaOpen()) { ClosePanorama(); return; }
-	// Before any of the early-outs below: the finger moves because the trigger was pulled,
-	// not because the pull happened to land on something.
-	TriggerPulseSeconds = FMath::Max(TriggerPulseDuration, 0.0f);
 
 	// Pulling the trigger on the hand currently holding a photo sends it straight back to the
 	// gallery instead of placing it on release - un-places it first if it was already a placed
@@ -693,7 +376,6 @@ void UMemoryRoomSelectionComponent::ActivateHoveredPhoto(EMemoryRoomHand Hand)
 			}
 			GrabbedPhoto.Reset();
 			bSecondaryGrabHandHeld = false;
-			bGrabCurlHeld = false;
 
 			if (bDebugSelectionLog)
 			{
@@ -778,10 +460,6 @@ void UMemoryRoomSelectionComponent::ActivateHoveredPhoto(EMemoryRoomHand Hand)
 void UMemoryRoomSelectionComponent::GrabHoveredPhoto(EMemoryRoomHand Hand)
 {
 	if (IsPanoramaOpen()) { ClosePanorama(); return; }
-	// Set before the early-outs, so the hand closes the instant the grab input fires whether
-	// or not there was a photo under it to take. Shared across both hands since only the right
-	// hand mesh is ever actually shown (bUseHandMeshOnLeft) - true while anything is held.
-	bGrabCurlHeld = true;
 
 	const bool bIsLeft = Hand == EMemoryRoomHand::Left;
 	TWeakObjectPtr<AMemoryRoomMenuActor>& HoveredMenuRef = bIsLeft ? LeftHoveredMenu : HoveredMenu;
@@ -881,7 +559,6 @@ void UMemoryRoomSelectionComponent::ReleaseGrabbedPhoto(EMemoryRoomHand Hand)
 	AMemoryPhotoActor* Grabbed = GrabbedPhoto.Get();
 	if (!Grabbed)
 	{
-		bGrabCurlHeld = false;
 		return;
 	}
 
@@ -931,7 +608,6 @@ void UMemoryRoomSelectionComponent::ReleaseGrabbedPhoto(EMemoryRoomHand Hand)
 		}
 		GrabbedPhoto.Reset();
 		bSecondaryGrabHandHeld = false;
-		bGrabCurlHeld = false;
 
 		if (bDebugSelectionLog)
 		{
@@ -1023,6 +699,22 @@ void UMemoryRoomSelectionComponent::StopLocomotionMoveInput()
 	if (AMemoryRoomManager* Manager = ResolveMemoryRoomManager())
 	{
 		Manager->StopLocomotionMoveInput();
+	}
+}
+
+void UMemoryRoomSelectionComponent::SetTurnInput(float Value)
+{
+	if (AMemoryRoomManager* Manager = ResolveMemoryRoomManager())
+	{
+		Manager->SetTurnInput(Value);
+	}
+}
+
+void UMemoryRoomSelectionComponent::StopTurnInput()
+{
+	if (AMemoryRoomManager* Manager = ResolveMemoryRoomManager())
+	{
+		Manager->StopTurnInput();
 	}
 }
 
@@ -1285,13 +977,13 @@ USceneComponent* UMemoryRoomSelectionComponent::ResolveLeftPointerComponent()
 		return nullptr;
 	}
 
-	// Same motion-source check EnsureHandVisuals already uses to tell the hands apart - more
+	// Motion-source check to tell the hands apart - more
 	// reliable than name-matching, since it is what the controller actually reports itself as.
 	TArray<UMotionControllerComponent*> Controllers;
 	Owner->GetComponents<UMotionControllerComponent>(Controllers);
 	for (UMotionControllerComponent* Controller : Controllers)
 	{
-		if (!Controller)
+		if (!Controller || Controller->ComponentHasTag(SelectionVisualGripTag))
 		{
 			continue;
 		}
@@ -1790,13 +1482,13 @@ FVector UMemoryRoomSelectionComponent::GetHandAimDirection(EMemoryRoomHand Hand,
 	{
 		return FVector::ForwardVector;
 	}
-	// The right controller follows the standard convention - local +X is its aim direction, the
-	// same axis GetForwardVector() already returns. The left controller does not: its local +Z
-	// is backward/toward the player, so its aim is the opposite of GetUpVector() (local +Z) -
-	// wait, local +Z read through GetUpVector()? No: GetUpVector() returns local +Z rotated to
-	// world, and the left's local +Z is measured as backward, so -GetUpVector() is forward/aim.
-	// See quest-grip-pose-axes in project memory for the measurement this is built from.
-	return Hand == EMemoryRoomHand::Left ? -Pointer->GetUpVector() : Pointer->GetForwardVector();
+	// Aim-pose controllers (the Meta rig LeftAim controller, tagged SelectionVisualGripTag, and the
+	// right controller) follow the standard convention: local +X is the aim direction, which
+	// GetForwardVector() returns. Only the left GRIP pose is rotated: its local +Z is measured
+	// as backward, so -GetUpVector() is forward there (see quest-grip-pose-axes in project
+	// memory). That grip form is kept for the fallback and for grab orientation.
+	const bool bIsAimPose = Pointer->ComponentHasTag(SelectionVisualGripTag);
+	return (Hand == EMemoryRoomHand::Left && !bIsAimPose) ? -Pointer->GetUpVector() : Pointer->GetForwardVector();
 }
 
 FVector UMemoryRoomSelectionComponent::GetHandUpDirection(EMemoryRoomHand Hand, const USceneComponent* Pointer) const
@@ -1926,7 +1618,6 @@ void UMemoryRoomSelectionComponent::HandlePlacedPhotoUnplaced(AMemoryPhotoActor*
 		ExpandedPhoto.Reset();
 	}
 	GrabbedPhoto.Reset();
-	bGrabCurlHeld = false;
 	bSecondaryGrabHandHeld = false;
 
 	// Still mid-hold (bExpanded) as far as the actor itself knows - nothing else is going to
